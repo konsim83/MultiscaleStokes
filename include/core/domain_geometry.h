@@ -64,7 +64,7 @@ protected:
 
   parallel::distributed::Triangulation<dim> triangulation;
 
-  Point<dim> lower_left_corner, upper_right_corner;
+  Point<dim> lower_left_corner, upper_right_corner, domain_center;
 };
 
 

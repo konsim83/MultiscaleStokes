@@ -121,10 +121,8 @@ StokesModel<dim>::setup_dofs()
   /*
    * Count dofs
    */
-  std::vector<types::global_dof_index> stokes_dofs_per_block(2);
-  DoFTools::count_dofs_per_block(stokes_dof_handler,
-                                 stokes_dofs_per_block,
-                                 stokes_sub_blocks);
+  const std::vector<types::global_dof_index> stokes_dofs_per_block =
+    DoFTools::count_dofs_per_fe_block(stokes_dof_handler, stokes_sub_blocks);
   const unsigned int n_u = stokes_dofs_per_block[0],
                      n_p = stokes_dofs_per_block[1];
 
@@ -401,7 +399,7 @@ StokesModel<dim>::local_assemble_stokes_system(
    * Function values of temperature forcing
    */
   CoreModelData::TemperatureForcing<dim> temperature_forcing(
-    /* center */ 0.5 * (this->upper_right_corner + this->lower_left_corner),
+    this->domain_center,
     parameters.physical_constants.reference_temperature,
     parameters.physical_constants.expansion_coefficient);
   std::vector<double> temperature_forcing_values(n_q_points);
@@ -413,6 +411,7 @@ StokesModel<dim>::local_assemble_stokes_system(
     {
       for (unsigned int k = 0; k < dofs_per_cell; ++k)
         {
+          scratch.phi_u[k] = scratch.stokes_fe_values[velocities].value(k, q);
           scratch.grads_phi_u[k] =
             scratch.stokes_fe_values[velocities].symmetric_gradient(k, q);
           scratch.div_phi_u[k] =
@@ -449,9 +448,9 @@ StokesModel<dim>::local_assemble_stokes_system(
        */
       for (unsigned int i = 0; i < dofs_per_cell; ++i)
         {
-          data.local_rhs(i) +=
-            (scratch.phi_u[i] * temperature_forcing_values[q] * gravity) *
-            scratch.stokes_fe_values.JxW(q);
+          data.local_rhs(i) += temperature_forcing_values[q] *
+                               (scratch.phi_u[i] * gravity) *
+                               scratch.stokes_fe_values.JxW(q);
         }
     }
 
@@ -588,7 +587,10 @@ StokesModel<dim>::solve()
   PrimitiveVectorMemory<LA::MPI::BlockVector> mem;
   unsigned int                                n_iterations = 0;
   const double  solver_tolerance = 1e-8 * stokes_rhs.l2_norm();
-  SolverControl solver_control(30, solver_tolerance);
+  SolverControl solver_control(30,
+                               solver_tolerance,
+                               /* log_history */ true,
+                               /* log_result */ true);
 
   try
     {
@@ -744,9 +746,37 @@ StokesModel<dim>::output_results()
     Utilities::MPI::this_mpi_process(this->mpi_communicator));
 
   DataOut<dim> data_out;
-  data_out.attach_dof_handler(stokes_dof_handler);
+  // data_out.attach_dof_handler(stokes_dof_handler);
 
-  data_out.add_data_vector(stokes_solution, postprocessor);
+  data_out.add_data_vector(stokes_dof_handler, stokes_solution, postprocessor);
+
+
+  std::vector<std::string> forcing_names(1, "vertical buoyancy force");
+
+  std::vector<DataComponentInterpretation::DataComponentInterpretation>
+    interpretation(1, DataComponentInterpretation::component_is_scalar);
+
+  DoFHandler<dim> forcing_dof_handler(this->triangulation);
+  FE_Q<dim>       forcing_fe(parameters.stokes_velocity_degree);
+  forcing_dof_handler.distribute_dofs(forcing_fe);
+  IndexSet locally_owned_forcing_dofs =
+    forcing_dof_handler.locally_owned_dofs();
+  LA::MPI::Vector bouyancy_forcing(locally_owned_forcing_dofs,
+                                   this->mpi_communicator);
+  VectorTools::project(forcing_dof_handler,
+                       AffineConstraints<double>(),
+                       QGauss<dim>(parameters.stokes_velocity_degree + 1),
+                       CoreModelData::TemperatureForcing<dim>(
+                         this->domain_center,
+                         parameters.physical_constants.reference_temperature,
+                         parameters.physical_constants.expansion_coefficient),
+                       bouyancy_forcing);
+
+  data_out.add_data_vector(forcing_dof_handler,
+                           bouyancy_forcing,
+                           forcing_names,
+                           interpretation);
+
 
   data_out.build_patches(parameters.stokes_velocity_degree);
 

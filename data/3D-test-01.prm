@@ -1,4 +1,4 @@
-subsection Boussinesq Model
+subsection Stokes Model
 
 	subsection Mesh parameters
 		set initial global refinement = 3

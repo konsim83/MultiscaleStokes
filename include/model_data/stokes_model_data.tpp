@@ -6,7 +6,7 @@ template <int dim>
 CoreModelData::TemperatureForcing<dim>::TemperatureForcing(
   const Point<dim> &center,
   const double      reference_temperature,
-  const double      expansion_coeff)
+  const double      expansion_coefficient)
   : Function<dim>(1)
   , center(center)
   , reference_temperature(reference_temperature)
@@ -16,7 +16,7 @@ CoreModelData::TemperatureForcing<dim>::TemperatureForcing(
 
   for (unsigned int d = 0; d < dim; ++d)
     {
-      covariance_matrix[d][d] = 0.05;
+      covariance_matrix[d][d] = 0.1;
     }
 }
 

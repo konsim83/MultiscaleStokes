@@ -23,6 +23,8 @@ DomainGeometry<dim>::DomainGeometry()
   if (dim == 3)
     upper_right_corner(2) = 1;
 
+  domain_center = 0.5 * (upper_right_corner + lower_left_corner);
+
   GridGenerator::hyper_rectangle(triangulation,
                                  lower_left_corner,
                                  upper_right_corner,

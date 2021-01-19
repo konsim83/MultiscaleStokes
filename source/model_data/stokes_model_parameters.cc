@@ -8,7 +8,7 @@ CoreModelData::Parameters::Parameters(const std::string &parameter_filename)
   , physical_constants(parameter_filename)
   , initial_global_refinement(2)
   , stokes_velocity_degree(2)
-  , use_locally_conservative_discretization(true)
+  , use_locally_conservative_discretization(false)
   , solver_diagnostics_print_level(1)
   , hello_from_cluster(false)
 {

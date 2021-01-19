@@ -52,6 +52,7 @@ namespace Assembly
                          stokes_fe,
                          stokes_quadrature,
                          stokes_update_flags)
+      , phi_u(stokes_fe.dofs_per_cell)
       , grads_phi_u(stokes_fe.dofs_per_cell)
       , div_phi_u(stokes_fe.dofs_per_cell)
     {}
@@ -64,6 +65,7 @@ namespace Assembly
                          scratch.stokes_fe_values.get_fe(),
                          scratch.stokes_fe_values.get_quadrature(),
                          scratch.stokes_fe_values.get_update_flags())
+      , phi_u(scratch.phi_u)
       , grads_phi_u(scratch.grads_phi_u)
       , div_phi_u(scratch.div_phi_u)
     {}

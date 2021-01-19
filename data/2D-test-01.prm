@@ -1,7 +1,7 @@
-subsection Boussinesq Model
+subsection Stokes Model
 
 	subsection Mesh parameters
-		set initial global refinement = 3
+		set initial global refinement = 4
 	end
 	
 	set space dimension = 2
@@ -12,13 +12,13 @@ subsection Boussinesq Model
 	set use locally conservative discretization = false
 	
 	# This is only for debugging purposes
-	set solver diagnostics level = 1
+	set solver diagnostics level = 2
     	
 	# Base name of outputfile
 	set filename output = boussinesq
 	
 	# Name of outputfile without ending
-	set dirname output = data-output-3d
+	set dirname output = data-output-2d
 	
 	# Output some info on MPI processes
 	# (Each MPI process says hello. 
@@ -31,7 +31,7 @@ subsection Physical Constants
 	  # Reference temperature
 	  #
 	  # Standard: 293.15 [K]
-	  set reference temperature = 0.5
+	  set reference temperature = 3
 
 	  # Air density
 	  #
@@ -42,7 +42,7 @@ subsection Physical Constants
     #
     # Unit: [1/K]     
     # Standard: 1/273.15 ~= 0.003661 (ideal gas)
-    set expansion coefficient = 0.2
+    set expansion coefficient = 0.3
 
     # Dynamic viscosity (eta or mu) of air at bottom reference
     # temperature.     

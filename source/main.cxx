@@ -61,8 +61,20 @@ main(int argc, char *argv[])
         }
     } // end while
 
+#ifdef DEBUG
+#  ifdef LIMIT_THREADS_FOR_DEBUG
+  MultithreadInfo::set_thread_limit(1);
+  dealii::Utilities::MPI::MPI_InitFinalize mpi_initialization(
+    argc, argv, /* max_threads */ 1);
+#  else
   dealii::Utilities::MPI::MPI_InitFinalize mpi_initialization(
     argc, argv, dealii::numbers::invalid_unsigned_int);
+#  endif
+#else
+  dealii::Utilities::MPI::MPI_InitFinalize mpi_initialization(
+    argc, argv, dealii::numbers::invalid_unsigned_int);
+#endif
+
 
   try
     {

@@ -27,8 +27,10 @@ namespace LA
 #endif
 } // namespace LA
 
+#define LIMIT_THREADS_FOR_DEBUG
+
 #define MSSTOKES_OPEN_NAMESPACE \
-  namespace MsStokes                \
+  namespace MsStokes            \
   {
 #define MSSTOKES_CLOSE_NAMESPACE }
 
