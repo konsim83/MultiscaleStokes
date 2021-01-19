@@ -17,7 +17,6 @@ include_directories(${MsStokes_INCLUDE_DIR})
 #set(MsStokes_TARGET_LIB_SRC ${MsStokes_TARGET_LIB_SRC})
 set(MsStokes_TARGET_LIB_SRC
 	base/utilities.cc
-	model_data/reference_quantities.cc
 	model_data/physical_constants.cc
 	model_data/stokes_model_data.inst.cc
 	model_data/stokes_model_parameters.cc

@@ -15,7 +15,7 @@
 // STL
 #include <memory>
 
-// AquaPlanet
+// MsStokes
 #include <base/config.h>
 
 MSSTOKES_OPEN_NAMESPACE
@@ -28,7 +28,7 @@ namespace LinearAlgebra
    * @brief Implements an iterative inverse
    *
    * Implement the inverse matrix of a given matrix through
-   * its action by a preconditioned CG solver. This class also
+   * its action by a preconditioned CG or GMRES solver. This class also
    * works with MPI.
    *
    * @note The inverse is not constructed explicitly.

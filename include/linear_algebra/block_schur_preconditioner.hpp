@@ -1,6 +1,6 @@
 #pragma once
 
-// AquaPlanet
+// MsStokes
 #include <base/config.h>
 
 MSSTOKES_OPEN_NAMESPACE

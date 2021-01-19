@@ -9,7 +9,6 @@
 // AquaPlanet
 #include <base/config.h>
 #include <model_data/physical_constants.h>
-#include <model_data/reference_quantities.h>
 
 
 MSSTOKES_OPEN_NAMESPACE

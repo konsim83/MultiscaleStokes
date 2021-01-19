@@ -49,7 +49,7 @@
 #include <deal.II/numerics/solution_transfer.h>
 #include <deal.II/numerics/vector_tools.h>
 
-// Aquaplanet3D
+// MsStokes
 #include <base/config.h>
 
 MSSTOKES_OPEN_NAMESPACE

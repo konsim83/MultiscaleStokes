@@ -27,7 +27,7 @@
 #include <vector>
 
 
-// DyCorePlanet headers
+// MsStokes
 #include <base/config.h>
 #include <model_data/stokes_model_data.h>
 
@@ -63,6 +63,8 @@ protected:
   TimerOutput        computing_timer;
 
   parallel::distributed::Triangulation<dim> triangulation;
+
+  Point<dim> lower_left_corner, upper_right_corner;
 };
 
 

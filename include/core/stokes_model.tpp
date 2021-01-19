@@ -115,11 +115,6 @@ StokesModel<dim>::setup_dofs()
   stokes_sub_blocks[dim] = 1;
 
   stokes_dof_handler.distribute_dofs(stokes_fe);
-  if (parameters.use_schur_complement_solver)
-    {
-      DoFRenumbering::Cuthill_McKee(stokes_dof_handler);
-      //  DoFRenumbering::boost::king_ordering(stokes_dof_handler);
-    }
 
   DoFRenumbering::component_wise(stokes_dof_handler, stokes_sub_blocks);
 
@@ -232,7 +227,7 @@ StokesModel<dim>::setup_dofs()
   stokes_rhs.reinit(stokes_partitioning,
                     stokes_relevant_partitioning,
                     this->mpi_communicator,
-                    true);
+                    /* is_writable */ true);
   stokes_solution.reinit(stokes_relevant_partitioning, this->mpi_communicator);
 }
 
@@ -402,6 +397,18 @@ StokesModel<dim>::local_assemble_stokes_system(
   data.local_matrix = 0;
   data.local_rhs    = 0;
 
+  /*
+   * Function values of temperature forcing
+   */
+  CoreModelData::TemperatureForcing<dim> temperature_forcing(
+    /* center */ 0.5 * (this->upper_right_corner + this->lower_left_corner),
+    parameters.physical_constants.reference_temperature,
+    parameters.physical_constants.expansion_coefficient);
+  std::vector<double> temperature_forcing_values(n_q_points);
+  temperature_forcing.value_list(
+    scratch.stokes_fe_values.get_quadrature_points(),
+    temperature_forcing_values);
+
   for (unsigned int q = 0; q < n_q_points; ++q)
     {
       for (unsigned int k = 0; k < dofs_per_cell; ++k)
@@ -443,7 +450,8 @@ StokesModel<dim>::local_assemble_stokes_system(
       for (unsigned int i = 0; i < dofs_per_cell; ++i)
         {
           data.local_rhs(i) +=
-            (scratch.phi_u[i] * gravity) * scratch.stokes_fe_values.JxW(q);
+            (scratch.phi_u[i] * temperature_forcing_values[q] * gravity) *
+            scratch.stokes_fe_values.JxW(q);
         }
     }
 
@@ -543,10 +551,7 @@ StokesModel<dim>::get_maximal_velocity() const
   double max_global_velocity =
     Utilities::MPI::max(max_local_velocity, this->mpi_communicator);
 
-  this->pcout << "   Max velocity (dimensionsless): " << max_global_velocity
-              << std::endl;
-  this->pcout << "   Max velocity (with dimensions): "
-              << max_global_velocity * parameters.reference_quantities.velocity
+  this->pcout << "   Max velocity (with dimensions): " << max_global_velocity
               << " m/s" << std::endl;
 
   return max_global_velocity;
@@ -559,7 +564,7 @@ StokesModel<dim>::get_maximal_velocity() const
 
 template <int dim>
 void
-StokesModel<dim>::solve_block_preconditioned()
+StokesModel<dim>::solve()
 {
   TimerOutput::Scope timer_section(this->computing_timer,
                                    "   Solve Stokes system");
@@ -615,7 +620,7 @@ StokesModel<dim>::solve_block_preconditioned()
                        stokes_preconditioner_matrix,
                        *Mp_preconditioner,
                        *Amg_preconditioner,
-                       true);
+                       /* full_preconditioned_solve*/ true);
 
       SolverControl solver_control_refined(stokes_matrix.m(), solver_tolerance);
 
@@ -637,149 +642,6 @@ StokesModel<dim>::solve_block_preconditioned()
   stokes_solution = distributed_stokes_solution;
 
   this->pcout << n_iterations << " iterations." << std::endl;
-}
-
-
-template <int dim>
-void
-StokesModel<dim>::solve_Schur_complement()
-{
-  TimerOutput::Scope timer_section(this->computing_timer,
-                                   "   Solve Stokes system");
-  this->pcout
-    << "   Solving Stokes system for one time step with (preconditioned Schur complement solver)... "
-    << std::endl;
-
-  /*
-   * Initialize the inner preconditioner.
-   */
-  inner_schur_preconditioner = std::make_shared<InnerPreconditionerType>();
-
-  // Fill preconditioner with life
-  inner_schur_preconditioner->initialize(stokes_matrix.block(0, 0), data);
-
-  using BlockInverseType =
-    LinearAlgebra::InverseMatrix<LA::SparseMatrix, InnerPreconditionerType>;
-  const BlockInverseType block_inverse(stokes_matrix.block(0, 0),
-                                       *inner_schur_preconditioner);
-
-  LA::MPI::BlockVector distributed_stokes_solution(stokes_rhs);
-  distributed_stokes_solution = stokes_solution;
-
-  const unsigned int
-    start = (distributed_stokes_solution.block(0).size() +
-             distributed_stokes_solution.block(1).local_range().first),
-    end   = (distributed_stokes_solution.block(0).size() +
-           distributed_stokes_solution.block(1).local_range().second);
-
-  for (unsigned int i = start; i < end; ++i)
-    if (stokes_constraints.is_constrained(i))
-      distributed_stokes_solution(i) = 0;
-
-  // tmp of size block(0)
-  LA::MPI::Vector tmp(stokes_partitioning[0], this->mpi_communicator);
-
-  // Set up Schur complement
-  LinearAlgebra::
-    SchurComplement<LA::BlockSparseMatrix, LA::MPI::Vector, BlockInverseType>
-      schur_complement(stokes_matrix,
-                       block_inverse,
-                       stokes_partitioning,
-                       this->mpi_communicator);
-
-  // Compute schur_rhs = -g + C*A^{-1}*f
-  LA::MPI::Vector schur_rhs(stokes_partitioning[1], this->mpi_communicator);
-
-  this->pcout
-    << std::endl
-    << "      Apply inverse of block (0,0) for Schur complement solver RHS..."
-    << std::endl;
-
-  block_inverse.vmult(tmp, stokes_rhs.block(0));
-  stokes_matrix.block(1, 0).vmult(schur_rhs, tmp);
-  schur_rhs -= stokes_rhs.block(1);
-
-  this->pcout << "      Schur complement solver RHS computation done..."
-              << std::endl
-              << std::endl;
-
-  {
-    TimerOutput::Scope t(
-      this->computing_timer,
-      "      Solve Stokes system - Schur complement solver (for pressure)");
-
-    this->pcout << "      Apply Schur complement solver..." << std::endl;
-
-    // Set Solver parameters for solving for u
-    SolverControl solver_control(stokes_matrix.m(), 1e-6 * schur_rhs.l2_norm());
-    SolverGMRES<LA::MPI::Vector> schur_solver(solver_control);
-
-    /*
-     * Precondition the Schur complement with
-     * the approximate inverse of an approximate
-     * Schur complement.
-     */
-    using ApproxSchurComplementType =
-      LinearAlgebra::ApproximateSchurComplement<LA::BlockSparseMatrix,
-                                                LA::MPI::Vector,
-                                                LA::PreconditionILU>;
-    ApproxSchurComplementType approx_schur(stokes_matrix,
-                                           stokes_partitioning,
-                                           this->mpi_communicator);
-
-    using ApproxSchurComplementPreconditionerType = LA::PreconditionIdentity;
-    ApproxSchurComplementPreconditionerType approx_schur_comp_preconditioner;
-#ifdef DEBUG
-    LinearAlgebra::ApproximateInverseMatrix<
-      ApproxSchurComplementType,
-      ApproxSchurComplementPreconditionerType>
-      preconditioner_for_schur_solver(
-        approx_schur,
-        approx_schur_comp_preconditioner,
-        /* n_iter */ numbers::invalid_unsigned_int);
-#else
-    LinearAlgebra::ApproximateInverseMatrix<
-      ApproxSchurComplementType,
-      ApproxSchurComplementPreconditionerType>
-      preconditioner_for_schur_solver(
-        approx_schur,
-        approx_schur_comp_preconditioner,
-        /* n_iter */ numbers::invalid_unsigned_int);
-#endif
-
-    schur_solver.solve(schur_complement,
-                       distributed_stokes_solution.block(1),
-                       schur_rhs,
-                       preconditioner_for_schur_solver);
-
-    this->pcout << "      Iterative Schur complement solver converged in "
-                << solver_control.last_step() << " iterations." << std::endl
-                << std::endl;
-
-    stokes_constraints.distribute(distributed_stokes_solution);
-  } // solve for pressure
-
-  {
-    TimerOutput::Scope t(this->computing_timer,
-                         "      Solve Stokes system - outer CG solver (for u)");
-
-    this->pcout << "      Apply outer solver..." << std::endl;
-
-    // use computed u to solve for sigma
-    stokes_matrix.block(0, 1).vmult(tmp, distributed_stokes_solution.block(1));
-    tmp *= -1;
-    tmp += stokes_rhs.block(0);
-
-    // Solve for velocity
-    block_inverse.vmult(distributed_stokes_solution.block(0), tmp);
-
-    this->pcout << "      Outer solver completed." << std::endl << std::endl;
-
-    stokes_constraints.distribute(distributed_stokes_solution);
-
-    stokes_solution = distributed_stokes_solution;
-
-  } // solve for velocity
 }
 
 
@@ -936,7 +798,6 @@ StokesModel<dim>::run()
 
   setup_dofs();
 
-
   try
     {
       Tools::create_data_directory(parameters.dirname_output);
@@ -946,29 +807,10 @@ StokesModel<dim>::run()
       // No exception handling here.
     }
 
-
   assemble_stokes_system();
+  build_stokes_preconditioner();
 
-  if (!parameters.use_schur_complement_solver)
-    build_stokes_preconditioner();
-
-  if (parameters.use_direct_solver)
-    {
-      TimerOutput::Scope t(this->computing_timer, " direct solver (MUMPS)");
-
-      throw std::runtime_error(
-        "Solver not implemented: MUMPS does not work on "
-        "TrilinosWrappers::MPI::BlockSparseMatrix classes.");
-    }
-
-  if (parameters.use_schur_complement_solver)
-    {
-      solve_Schur_complement();
-    }
-  else
-    {
-      solve_block_preconditioned();
-    }
+  solve();
 
   output_results();
 

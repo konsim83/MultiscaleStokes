@@ -1,0 +1,59 @@
+subsection Boussinesq Model
+
+	subsection Mesh parameters
+		set initial global refinement = 3
+	end
+	
+	set space dimension = 3
+
+	set stokes velocity degree = 2
+	
+	# only valid for standard H1-L2 elements
+	set use locally conservative discretization = false
+	
+	# This is only for debugging purposes
+	set solver diagnostics level = 1
+    	
+	# Base name of outputfile
+	set filename output = boussinesq
+	
+	# Name of outputfile without ending
+	set dirname output = data-output-3d
+	
+	# Output some info on MPI processes
+	# (Each MPI process says hello. 
+	# Careful with many processes)
+	set hello from cluster = true
+end
+
+
+subsection Physical Constants
+	  # Reference temperature
+	  #
+	  # Standard: 293.15 [K]
+	  set reference temperature = 0.5
+
+	  # Air density
+	  #
+	  # Standard: 1000 [kg / m^3]
+	  set density = 1
+    
+    # Thermal expansion coefficient.
+    #
+    # Unit: [1/K]     
+    # Standard: 1/273.15 ~= 0.003661 (ideal gas)
+    set expansion coefficient = 0.2
+
+    # Dynamic viscosity (eta or mu) of air at bottom reference
+    # temperature.     
+    #
+    # Unit: [kg/(m*s)]
+    # Standard: 1.82e-5
+    set dynamic viscosity = 1.0e-1
+
+    # Gravity constant.
+    #
+    # Unit: [m/s^2]
+    # Standard: 9.81
+    set gravity constant = 1
+end

@@ -6,7 +6,7 @@
 #include <deal.II/numerics/vector_tools.h>
 
 
-// AquaPlanet
+// MsStokes
 #include <base/config.h>
 
 MSSTOKES_OPEN_NAMESPACE
@@ -25,11 +25,6 @@ namespace LinearAlgebra
     vmult(LA::MPI::BlockVector &dst, const LA::MPI::BlockVector &src) const
     {
       dst = src;
-
-      //      const double mean_value =
-      //        VectorTools::compute_mean_value(dof_handler, QGauss<3>(3), dst,
-      //        6);
-      //      dst.block(2).add(-mean_value);
     }
 
   private:

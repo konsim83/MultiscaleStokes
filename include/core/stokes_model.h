@@ -61,16 +61,13 @@
 #include <vector>
 
 
-// AquaPlanet
+// MsStokes
 #include <base/config.h>
 #include <base/utilities.h>
 #include <core/domain_geometry.h>
 #include <core/stokes_model_assembly.h>
-#include <linear_algebra/approximate_inverse.hpp>
-#include <linear_algebra/approximate_schur_complement.hpp>
 #include <linear_algebra/block_schur_preconditioner.hpp>
-#include <linear_algebra/inverse_matrix.hpp>
-#include <linear_algebra/schur_complement.hpp>
+#include <linear_algebra/preconditioner_block_identity.hpp>
 #include <model_data/core_model_data.h>
 #include <model_data/stokes_model_data.h>
 #include <model_data/stokes_model_parameters.h>
@@ -144,16 +141,10 @@ private:
   get_maximal_velocity() const;
 
   void
-  solve_block_preconditioned();
-
-  void
-  solve_Schur_complement();
+  solve();
 
   void
   output_results();
-
-  void
-  print_paramter_info() const;
 
   /*!
    * Parameter class.
@@ -201,11 +192,6 @@ private:
     const Assembly::CopyData::StokesSystem<dim> &data);
 
   class Postprocessor;
-
-  using InnerPreconditionerType = typename LA::PreconditionILU;
-  std::shared_ptr<InnerPreconditionerType>         inner_schur_preconditioner;
-  typename InnerPreconditionerType::AdditionalData data;
-  bool is_initialized_inner_schur_preconditioner = false;
 };
 
 // Extern template instantiations

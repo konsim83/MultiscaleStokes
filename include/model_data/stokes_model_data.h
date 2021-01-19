@@ -22,12 +22,47 @@ MSSTOKES_OPEN_NAMESPACE
 namespace CoreModelData
 {
   /*!
-   * @namespace StaticStokes
-   *
-   * Namespace containing constants and helper functions.
+   * Temerature initial values for rising warm bubble test.
    */
-  namespace StaticStokes
-  {} // namespace StaticStokes
+  template <int dim>
+  class TemperatureForcing : public Function<dim>
+  {
+  public:
+    /*!
+     * Constructor.
+     */
+    TemperatureForcing(const Point<dim> &center,
+                       const double      reference_temperature,
+                       const double      expansion_coeff);
+
+
+    /*!
+     * Return temperature value at a single point.
+     *
+     * @param p
+     * @param component
+     * @return
+     */
+    virtual double
+    value(const Point<dim> &p, const unsigned int component = 0) const override;
+
+    /*!
+     * Return temperature value as a vector at a single point.
+     *
+     * @param points
+     * @param values
+     */
+    virtual void
+    value_list(const std::vector<Point<dim>> &points,
+               std::vector<double> &          values,
+               const unsigned int             component = 0) const override;
+
+  private:
+    Point<dim>     center;
+    Tensor<2, dim> covariance_matrix;
+    const double   reference_temperature;
+    const double   expansion_coefficient;
+  };
 } // namespace CoreModelData
 
 MSSTOKES_CLOSE_NAMESPACE

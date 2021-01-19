@@ -5,14 +5,11 @@ MSSTOKES_OPEN_NAMESPACE
 
 CoreModelData::Parameters::Parameters(const std::string &parameter_filename)
   : space_dimension(2)
-  , reference_quantities(parameter_filename)
   , physical_constants(parameter_filename)
   , initial_global_refinement(2)
   , stokes_velocity_degree(2)
   , use_locally_conservative_discretization(true)
   , solver_diagnostics_print_level(1)
-  , use_schur_complement_solver(true)
-  , use_direct_solver(false)
   , hello_from_cluster(false)
 {
   ParameterHandler prm;
@@ -80,18 +77,6 @@ CoreModelData::Parameters::declare_parameters(ParameterHandler &prm)
                       Patterns::Integer(0),
                       "Output level for solver for debug purposes.");
 
-    prm.declare_entry(
-      "use schur complement solver",
-      "false",
-      Patterns::Bool(),
-      "Choose whether to use a preconditioned Schur complement solver or an iterative block system solver with block preconditioner.");
-
-    prm.declare_entry(
-      "use direct solver",
-      "false",
-      Patterns::Bool(),
-      "Choose whether to use a direct solver for the Navier-Stokes part.");
-
     prm.declare_entry("filename output",
                       "dycore",
                       Patterns::FileName(),
@@ -133,8 +118,6 @@ CoreModelData::Parameters::parse_parameters(ParameterHandler &prm)
 
     solver_diagnostics_print_level =
       prm.get_integer("solver diagnostics level");
-    use_schur_complement_solver = prm.get_bool("use schur complement solver");
-    use_direct_solver           = prm.get_bool("use direct solver");
 
     filename_output = prm.get("filename output");
     dirname_output  = prm.get("dirname output");

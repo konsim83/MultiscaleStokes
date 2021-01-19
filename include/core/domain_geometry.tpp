@@ -18,15 +18,13 @@ DomainGeometry<dim>::DomainGeometry()
   TimerOutput::Scope timing_section(
     computing_timer, "DomainGeometry - constructor with grid generation");
 
-
-  Point<dim> p0, upper_right_corner;
   upper_right_corner(0) = 1;
   upper_right_corner(1) = 1;
   if (dim == 3)
     upper_right_corner(2) = 1;
 
   GridGenerator::hyper_rectangle(triangulation,
-                                 Point<dim>(),
+                                 lower_left_corner,
                                  upper_right_corner,
                                  /* colorize */ true);
 

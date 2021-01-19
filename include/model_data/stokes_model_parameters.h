@@ -6,7 +6,6 @@
 // AquaPlanet
 #include <base/config.h>
 #include <model_data/physical_constants.h>
-#include <model_data/reference_quantities.h>
 
 MSSTOKES_OPEN_NAMESPACE
 
@@ -29,8 +28,7 @@ namespace CoreModelData
 
     unsigned int space_dimension;
 
-    CoreModelData::ReferenceQuantities reference_quantities;
-    CoreModelData::PhysicalConstants   physical_constants;
+    CoreModelData::PhysicalConstants physical_constants;
 
     unsigned int initial_global_refinement;
 
@@ -39,9 +37,6 @@ namespace CoreModelData
     bool use_locally_conservative_discretization;
 
     unsigned int solver_diagnostics_print_level;
-
-    bool use_schur_complement_solver;
-    bool use_direct_solver;
 
     std::string filename_output;
     std::string dirname_output;

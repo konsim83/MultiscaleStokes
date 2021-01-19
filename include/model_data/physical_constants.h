@@ -5,7 +5,6 @@
 
 // AquaPlanet
 #include <base/config.h>
-#include <model_data/reference_quantities.h>
 
 MSSTOKES_OPEN_NAMESPACE
 
@@ -27,30 +26,15 @@ namespace CoreModelData
     parse_parameters(ParameterHandler &prm);
 
     /*!
-     * Earth reference pressure.
+     * Reference temperature. This is not really a physical constant.
      */
-    double pressure; /* Pa */
-
-    /*!
-     * Earth angular velocity.
-     */
-    double omega; /* 1/s */
+    double reference_temperature;
 
     /*!
      * Reference density of air at bottom reference
      * temperature.
      */
     double density; /* kg / m^3 */
-
-    /*!
-     * Universal gas constant.
-     */
-    double universal_gas_constant; /* J/(mol*K) */
-
-    /*!
-     * Specific gas constant of dry air.
-     */
-    double specific_gas_constant_dry; /* J/(kg*K) */
 
     /*!
      * Thermal expansion coefficient (beta) of air at bottom reference
@@ -71,58 +55,9 @@ namespace CoreModelData
     double kinematic_viscosity;
 
     /*!
-     * Specific heat capacity of air under constant pressure.
-     */
-    double specific_heat_p; /* J / (K*kg) */
-
-    /*!
-     * Specific heat capacity of air under isochoric changes of state.
-     */
-    double specific_heat_v; /* J / (K*kg) */
-
-    /*!
-     * Thermal conductivity (kappa, k or lambda) of air at bottom reference
-     * temperature.
-     */
-    double thermal_conductivity; /* W/(m*K) */
-
-    /*!
-     * Thermal diffusivity (alpha or a) of air at bottom reference
-     * temperature.
-     */
-    double thermal_diffusivity;
-
-    /*!
-     * A good part of the earth's heat loss through the surface is due
-     * to the decay of radioactive elements (uranium, thorium,
-     * potassium).
-     */
-    double radiogenic_heating; /* W / kg */
-
-    /*!
      * Gravity constant.
      */
     double gravity_constant; /* m/s^2 */
-
-    /*!
-     * Speed of sound.
-     */
-    double speed_of_sound; /* m/s */
-
-    /*!
-     * Height of atmosphere (up to mesosphere)
-     */
-    double atm_height; /* m */
-
-    /*!
-     * Inner earth radius
-     */
-    double R0; /* m */
-
-    /*!
-     * Earth radius plus height of mesosphere.
-     */
-    double R1; /* m */
 
     /*!
      * A year in seconds.

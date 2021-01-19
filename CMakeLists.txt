@@ -23,7 +23,7 @@ message(STATUS "")
 
 cmake_minimum_required(VERSION 2.8.12)
 
-find_package(deal.II 9.1.1 QUIET
+find_package(deal.II 9.2.0 QUIET
   HINTS ${deal.II_DIR} ${DEAL_II_DIR} ../ ../../ $ENV{DEAL_II_DIR}
   )
 if (NOT ${deal.II_FOUND})
