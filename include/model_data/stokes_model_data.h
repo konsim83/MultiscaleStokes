@@ -33,7 +33,7 @@ namespace CoreModelData
      */
     TemperatureForcing(const Point<dim> &center,
                        const double      reference_temperature,
-                       const double      expansion_coeff);
+                       const double      expansion_coefficient);
 
 
     /*!
@@ -64,5 +64,9 @@ namespace CoreModelData
     const double   expansion_coefficient;
   };
 } // namespace CoreModelData
+
+// Extern template instantiations
+extern template class CoreModelData::TemperatureForcing<2>;
+extern template class CoreModelData::TemperatureForcing<3>;
 
 MSSTOKES_CLOSE_NAMESPACE

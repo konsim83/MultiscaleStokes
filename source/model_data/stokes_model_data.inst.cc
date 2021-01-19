@@ -4,7 +4,10 @@
 
 MSSTOKES_OPEN_NAMESPACE
 
-// Extern template instantiations
+// template instantiations
+// template instantiations
+template class CoreModelData::TemperatureForcing<2>;
+template class CoreModelData::TemperatureForcing<3>;
 
 
 MSSTOKES_CLOSE_NAMESPACE
