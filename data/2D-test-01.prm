@@ -1,7 +1,7 @@
 subsection Stokes Model
 
 	subsection Mesh parameters
-		set initial global refinement = 4
+		set initial global refinement = 6
 	end
 	
 	set space dimension = 2

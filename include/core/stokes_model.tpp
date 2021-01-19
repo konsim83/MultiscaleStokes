@@ -664,7 +664,8 @@ std::vector<std::string>
 StokesModel<dim>::Postprocessor::get_names() const
 {
   std::vector<std::string> solution_names(dim, "velocity");
-  solution_names.emplace_back("p");
+  solution_names.emplace_back("pressure");
+  solution_names.emplace_back("vertical_buoyancy_force");
   solution_names.emplace_back("partition");
 
   return solution_names;
@@ -679,6 +680,7 @@ StokesModel<dim>::Postprocessor::get_data_component_interpretation() const
   std::vector<DataComponentInterpretation::DataComponentInterpretation>
     interpretation(dim,
                    DataComponentInterpretation::component_is_part_of_vector);
+  interpretation.push_back(DataComponentInterpretation::component_is_scalar);
   interpretation.push_back(DataComponentInterpretation::component_is_scalar);
   interpretation.push_back(DataComponentInterpretation::component_is_scalar);
 
@@ -707,7 +709,7 @@ StokesModel<dim>::Postprocessor::evaluate_vector_field(
   Assert(inputs.solution_gradients.size() == n_quadrature_points,
          ExcInternalError());
   Assert(computed_quantities.size() == n_quadrature_points, ExcInternalError());
-  Assert(inputs.solution_values[0].size() == dim + 1, ExcInternalError());
+  Assert(inputs.solution_values[0].size() == dim + 2, ExcInternalError());
 
   /*
    * TODO: Rescale to physical quantities here.
@@ -720,7 +722,10 @@ StokesModel<dim>::Postprocessor::evaluate_vector_field(
       const double pressure       = (inputs.solution_values[q](dim));
       computed_quantities[q](dim) = pressure;
 
-      computed_quantities[q](dim + 1) = partition;
+      // should be negative since gravity points downward
+      computed_quantities[q](dim + 1) = -inputs.solution_values[q](dim + 1);
+
+      computed_quantities[q](dim + 2) = partition;
     }
 }
 
@@ -741,30 +746,26 @@ StokesModel<dim>::output_results()
   this->pcout << "   Writing Boussinesq solution for one timestep... "
               << std::flush;
 
-
-  Postprocessor postprocessor(
-    Utilities::MPI::this_mpi_process(this->mpi_communicator));
-
-  DataOut<dim> data_out;
-  // data_out.attach_dof_handler(stokes_dof_handler);
-
-  data_out.add_data_vector(stokes_dof_handler, stokes_solution, postprocessor);
-
-
-  std::vector<std::string> forcing_names(1, "vertical buoyancy force");
-
-  std::vector<DataComponentInterpretation::DataComponentInterpretation>
-    interpretation(1, DataComponentInterpretation::component_is_scalar);
-
+  // First the forcing projection with a different DoFHandler
   DoFHandler<dim> forcing_dof_handler(this->triangulation);
   FE_Q<dim>       forcing_fe(parameters.stokes_velocity_degree);
   forcing_dof_handler.distribute_dofs(forcing_fe);
+
+  AffineConstraints<double> no_constraints;
+  no_constraints.clear();
+  DoFTools::make_hanging_node_constraints(forcing_dof_handler, no_constraints);
+  no_constraints.close();
+
   IndexSet locally_owned_forcing_dofs =
     forcing_dof_handler.locally_owned_dofs();
+  IndexSet locally_relevant_forcing_dofs;
+  DoFTools::extract_locally_relevant_dofs(forcing_dof_handler,
+                                          locally_relevant_forcing_dofs);
   LA::MPI::Vector bouyancy_forcing(locally_owned_forcing_dofs,
+                                   locally_relevant_forcing_dofs,
                                    this->mpi_communicator);
   VectorTools::project(forcing_dof_handler,
-                       AffineConstraints<double>(),
+                       no_constraints,
                        QGauss<dim>(parameters.stokes_velocity_degree + 1),
                        CoreModelData::TemperatureForcing<dim>(
                          this->domain_center,
@@ -772,10 +773,99 @@ StokesModel<dim>::output_results()
                          parameters.physical_constants.expansion_coefficient),
                        bouyancy_forcing);
 
-  data_out.add_data_vector(forcing_dof_handler,
-                           bouyancy_forcing,
-                           forcing_names,
-                           interpretation);
+  // Now join the Stokes and the forcing dofs
+  const FESystem<dim> joint_fe(stokes_fe, 1, forcing_fe, 1);
+
+  DoFHandler<dim> joint_dof_handler(this->triangulation);
+  joint_dof_handler.distribute_dofs(joint_fe);
+
+  Assert(joint_dof_handler.n_dofs() ==
+           stokes_dof_handler.n_dofs() + forcing_dof_handler.n_dofs(),
+         ExcInternalError());
+
+  LA::MPI::Vector joint_solution;
+
+  joint_solution.reinit(joint_dof_handler.locally_owned_dofs(),
+                        this->mpi_communicator);
+
+  {
+    std::vector<types::global_dof_index> local_joint_dof_indices(
+      joint_fe.dofs_per_cell);
+    std::vector<types::global_dof_index> local_stokes_dof_indices(
+      stokes_fe.dofs_per_cell);
+    std::vector<types::global_dof_index> local_forcing_dof_indices(
+      forcing_fe.dofs_per_cell);
+
+    typename DoFHandler<dim>::active_cell_iterator
+      joint_cell   = joint_dof_handler.begin_active(),
+      joint_endc   = joint_dof_handler.end(),
+      stokes_cell  = stokes_dof_handler.begin_active(),
+      forcing_cell = forcing_dof_handler.begin_active();
+    for (; joint_cell != joint_endc;
+         ++joint_cell, ++stokes_cell, ++forcing_cell)
+      {
+        if (joint_cell->is_locally_owned())
+          {
+            joint_cell->get_dof_indices(local_joint_dof_indices);
+            stokes_cell->get_dof_indices(local_stokes_dof_indices);
+            forcing_cell->get_dof_indices(local_forcing_dof_indices);
+
+            for (unsigned int i = 0; i < joint_fe.dofs_per_cell; ++i)
+              if (joint_fe.system_to_base_index(i).first.first == 0)
+                {
+                  Assert(joint_fe.system_to_base_index(i).second <
+                           local_stokes_dof_indices.size(),
+                         ExcInternalError());
+
+                  joint_solution(local_joint_dof_indices[i]) = stokes_solution(
+                    local_stokes_dof_indices[joint_fe.system_to_base_index(i)
+                                               .second]);
+                }
+              else
+                {
+                  Assert(joint_fe.system_to_base_index(i).first.first == 1,
+                         ExcInternalError());
+                  Assert(joint_fe.system_to_base_index(i).second <
+                           local_forcing_dof_indices.size(),
+                         ExcInternalError());
+
+                  joint_solution(local_joint_dof_indices[i]) = bouyancy_forcing(
+                    local_forcing_dof_indices[joint_fe.system_to_base_index(i)
+                                                .second]);
+                }
+          } // end if is_locally_owned()
+      }     // end for ++joint_cell
+  }
+
+  joint_solution.compress(VectorOperation::insert);
+
+  IndexSet locally_relevant_joint_dofs(joint_dof_handler.n_dofs());
+  DoFTools::extract_locally_relevant_dofs(joint_dof_handler,
+                                          locally_relevant_joint_dofs);
+
+  LA::MPI::Vector locally_relevant_joint_solution;
+  locally_relevant_joint_solution.reinit(locally_relevant_joint_dofs,
+                                         this->mpi_communicator);
+  locally_relevant_joint_solution = joint_solution;
+
+
+  Postprocessor postprocessor(
+    Utilities::MPI::this_mpi_process(this->mpi_communicator));
+
+  DataOut<dim> data_out;
+  data_out.attach_dof_handler(joint_dof_handler);
+
+  data_out.add_data_vector(locally_relevant_joint_solution, postprocessor);
+
+
+  // data_out.add_data_vector(stokes_dof_handler, stokes_solution,
+  // postprocessor);
+
+
+  // std::vector<std::string> forcing_names(1, "vertical buoyancy force");
+
+  // std::vector<DataComponentInterpretation::DataComponentInterpretation>
+  //   interpretation(1, DataComponentInterpretation::component_is_scalar);
 
 
   data_out.build_patches(parameters.stokes_velocity_degree);
@@ -806,6 +896,8 @@ StokesModel<dim>::output_results()
                                 pvtu_master_filename);
       data_out.write_pvtu_record(pvtu_master, filenames);
     }
+
+  forcing_dof_handler.clear();
 
   this->pcout << std::endl;
 }
