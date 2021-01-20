@@ -97,6 +97,7 @@ set (MsStokes_LIBRARY MsStokes)
 ###############################################################################
 set(MsStokes_INCLUDE_DIR
 		${CMAKE_SOURCE_DIR}/include)
+include_directories(${MsStokes_INCLUDE_DIR} ${DEAL_II_DIR}/include)
 
 set(MsStokes_SRC_DIR 
 		${CMAKE_SOURCE_DIR}/source)
