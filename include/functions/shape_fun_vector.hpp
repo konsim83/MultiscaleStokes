@@ -27,6 +27,9 @@
 #include <iostream>
 #include <vector>
 
+// My Headers
+#include <base/config.h>
+
 MSSTOKES_OPEN_NAMESPACE
 
 namespace ShapeFun
@@ -77,7 +80,11 @@ namespace ShapeFun
     , shape_fun_index(0)
     , mapping(1)
     , current_cell_ptr(&cell)
-  {}
+  {
+    // Make sure FE has dim components
+    Assert(fe_ptr->n_components() == dim,
+           ExcDimensionMismatch(dim, fe_ptr->n_components()));
+  }
 
   template <int dim>
   void

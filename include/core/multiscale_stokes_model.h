@@ -70,21 +70,22 @@
 #include <model_data/core_model_data.h>
 #include <model_data/stokes_model_data.h>
 #include <model_data/stokes_model_parameters.h>
+#include <multiscale_basis/divergence_stabilized_basis.h>
 
 
 MSSTOKES_OPEN_NAMESPACE
 
 /*!
- * @class StokesModel
+ * @class MultiscaleStokesModel
  *
  * @brief Class to implement a nD Stokes problem on a cube with hyper shell topology.
  */
 template <int dim>
-class StokesModel : protected DomainGeometry<dim>
+class MultiscaleStokesModel : protected DomainGeometry<dim>
 {
 public:
-  StokesModel(CoreModelData::Parameters &parameters);
-  ~StokesModel();
+  MultiscaleStokesModel(CoreModelData::Parameters &parameters);
+  ~MultiscaleStokesModel();
 
   void
   run();
@@ -118,6 +119,9 @@ private:
   setup_dofs();
 
   void
+  initialize_and_compute_basis();
+
+  void
   setup_stokes_matrices(
     const std::vector<IndexSet> &stokes_partitioning,
     const std::vector<IndexSet> &stokes_relevant_partitioning);
@@ -141,6 +145,23 @@ private:
 
   void
   solve();
+
+  /*!
+   * After computing the global multiscale
+   * solution we need to send the global weights to each
+   * basis object. This then defines the global solution.
+   */
+  void
+  send_global_weights_to_cell();
+
+  /*!
+   * Collect all file names of
+   * basis objects on each processor.
+   *
+   * @return
+   */
+  std::vector<std::string>
+  collect_filenames_on_mpi_process();
 
   void
   output_results();
@@ -191,10 +212,23 @@ private:
     const Assembly::CopyData::StokesSystem<dim> &data);
 
   class Postprocessor;
+
+  /**
+   * Convenience typedef for STL map holding basis functions for each
+   * coarse cell.
+   */
+  using BasisMap = std::map<CellId, DivergenceStabilizedBasis<dim>>;
+
+  /**
+   * Basis vector maps cell_id to local basis.
+   */
+  BasisMap cell_basis_map;
+
+  CoreModelData::TemperatureForcing<dim> temperature_forcing;
 };
 
 // Extern template instantiations
-extern template class StokesModel<2>;
-extern template class StokesModel<3>;
+extern template class MultiscaleStokesModel<2>;
+extern template class MultiscaleStokesModel<3>;
 
 MSSTOKES_CLOSE_NAMESPACE

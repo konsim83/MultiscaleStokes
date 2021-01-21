@@ -5,12 +5,14 @@
 
 MSSTOKES_OPEN_NAMESPACE
 
+template <int dim>
 DivergenceStabilizedBasis::DivergenceStabilizedBasis(
-  const CoreModelData::Parameters &                parameters,
-  typename Triangulation<3>::active_cell_iterator &global_cell,
-  bool                                             is_first_cell,
-  unsigned int                                     local_subdomain,
-  MPI_Comm                                         mpi_communicator)
+  const CoreModelData::Parameters &                  parameters,
+  typename Triangulation<dim>::active_cell_iterator &global_cell,
+  bool                                               is_first_cell,
+  unsigned int                                       local_subdomain,
+  CoreModelData::TemperatureForcing<dim> &           temperature_forcing,
+  MPI_Comm                                           mpi_communicator)
   : mpi_communicator(mpi_communicator)
   , parameters(parameters_ms)
   , parameter_filename(parameter_filename_)
@@ -24,19 +26,20 @@ DivergenceStabilizedBasis::DivergenceStabilizedBasis(
             FE_Q<dim>(parameters.stokes_velocity_degree - 1))),
        1)
   , dof_handler(triangulation)
-  , modified_basis_constraints(fe.base_element(0).n_dofs_per_cell)
+  , velocity_basis_constraints(fe.base_element(0).n_dofs_per_cell)
   , sparsity_pattern()
-  , modified_basis(fe.base_element(0).n_dofs_per_cell)
+  , velocity_basis(fe.base_element(0).n_dofs_per_cell)
+  , pressure_basis(fe.base_element(1).n_dofs_per_cell)
   , system_rhs(fe.base_element(0).n_dofs_per_cell)
   , global_element_matrix(fe.dofs_per_cell, fe.dofs_per_cell)
   , global_element_rhs(fe.dofs_per_cell)
   , global_weights(fe.dofs_per_cell, 0)
   , global_cell_id(global_cell->id())
   , is_first_cell(is_first_cell)
-  , global_cell_it(global_cell)
+  , global_cell(global_cell)
   , local_subdomain(local_subdomain)
   , corner_points(GeometryInfo<dim>::vertices_per_cell, Point<dim>())
-  , length_system_basis(modified_basis_constraints.size())
+  , temperature_forcing_ptr(&temperature_forcing)
   , is_built_global_element_matrix(false)
   , is_set_global_weights(false)
   , is_set_cell_data(false)
@@ -45,12 +48,13 @@ DivergenceStabilizedBasis::DivergenceStabilizedBasis(
        vertex_n < GeometryInfo<dim>::vertices_per_cell;
        ++vertex_n)
     {
-      corner_points[vertex_n] = global_cell_it->vertex(vertex_n);
+      corner_points[vertex_n] = global_cell->vertex(vertex_n);
     }
 
   is_set_cell_data = true;
 }
 
+template <int dim>
 DivergenceStabilizedBasis::DivergenceStabilizedBasis(
   const DivergenceStabilizedBasis &other)
   : mpi_communicator(other.mpi_communicator)
@@ -58,14 +62,19 @@ DivergenceStabilizedBasis::DivergenceStabilizedBasis(
   , parameter_filename(other.parameter_filename)
   , triangulation() // must be constructed deliberately, but is empty on
                     // copying anyway
-  , fe(FE_RaviartThomas<3>(parameters.degree),
-       1,
-       FE_DGQ<3>(parameters.degree),
+  , fe(FE_Q<dim>(parameters.stokes_velocity_degree),
+       dim,
+       (parameters.use_locally_conservative_discretization ?
+          static_cast<const FiniteElement<dim> &>(
+            FE_DGP<dim>(parameters.stokes_velocity_degree - 1)) :
+          static_cast<const FiniteElement<dim> &>(
+            FE_Q<dim>(parameters.stokes_velocity_degree - 1))),
        1)
   , dof_handler(triangulation)
-  , modified_basis_constraints(other.modified_basis_constraints)
+  , velocity_basis_constraints(other.velocity_basis_constraints)
   , sparsity_pattern()
-  , modified_basis(other.modified_basis)
+  , velocity_basis(other.velocity_basis)
+  , pressure_basis(other.pressure_basis)
   , system_rhs(other.system_rhs)
   , global_rhs(other.global_rhs)
   , global_element_matrix(other.global_element_matrix)
@@ -75,39 +84,41 @@ DivergenceStabilizedBasis::DivergenceStabilizedBasis(
   , inner_schur_preconditioner(other.inner_schur_preconditioner)
   , global_cell_id(other.global_cell_id)
   , is_first_cell(other.is_first_cell)
-  , global_cell_it(other.global_cell_it)
+  , global_cell(other.global_cell)
   , local_subdomain(other.local_subdomain)
   , corner_points(other.corner_points)
-  , length_system_basis(other.length_system_basis)
+  , temperature_forcing_ptr(other.temperature_forcing_ptr)
   , is_built_global_element_matrix(other.is_built_global_element_matrix)
   , is_set_global_weights(other.is_set_global_weights)
   , is_set_cell_data(other.is_set_cell_data)
 {
-  global_cell_id = global_cell_it->id();
+  global_cell_id = global_cell->id();
 
   for (unsigned int vertex_n = 0;
        vertex_n < GeometryInfo<dim>::vertices_per_cell;
        ++vertex_n)
     {
-      corner_points[vertex_n] = global_cell_it->vertex(vertex_n);
+      corner_points[vertex_n] = global_cell->vertex(vertex_n);
     }
 
   is_set_cell_data = true;
 }
 
+template <int dim>
 DivergenceStabilizedBasis::~DivergenceStabilizedBasis()
 {
   system_matrix.clear();
 
-  for (unsigned int n_basis = 0; n_basis < GeometryInfo<dim>::faces_per_cell;
+  for (unsigned int n_basis = 0; n_basis < fe.base_element(0).n_dofs_per_cell();
        ++n_basis)
     {
-      modified_basis_constraints[n_basis].clear();
+      velocity_basis_constraints[n_basis].clear();
     }
 
   dof_handler.clear();
 }
 
+template <int dim>
 void
 DivergenceStabilizedBasis::setup_grid()
 {
@@ -120,6 +131,7 @@ DivergenceStabilizedBasis::setup_grid()
   triangulation.refine_global(parameters.n_refine_local);
 }
 
+template <int dim>
 void
 DivergenceStabilizedBasis::setup_system_matrix()
 {
@@ -191,13 +203,11 @@ DivergenceStabilizedBasis::setup_system_matrix()
   assembled_matrix.reinit(sparsity_pattern);
   assembled_preconditioner.reinit(preconditioner_sparsity_pattern);
 
-  system_matrix.reinit(sparsity_pattern);
-  preconditioner_matrix.reinit(preconditioner_sparsity_pattern);
-
   global_solution.reinit(dofs_per_block);
   global_rhs.reinit(dofs_per_block);
 }
 
+template <int dim>
 void
 DivergenceStabilizedBasis::setup_basis_dofs()
 {
@@ -213,27 +223,27 @@ DivergenceStabilizedBasis::setup_basis_dofs()
     }
 
   ShapeFun::ShapeFunctionVector<dim> std_shape_function_stokes(
-    fe.base_element(0), global_cell_it);
+    fe.base_element(0), global_cell);
 
   FEValuesExtractors::Vector velocities(0);
-  for (unsigned int n_basis = 0; n_basis < modified_basis.size(); ++n_basis)
+  for (unsigned int n_basis = 0; n_basis < velocity_basis.size(); ++n_basis)
     {
       std_shape_function_stokes.set_index(n_basis);
 
-      // set constraints (first hanging nodes, then flux)
-      modified_basis_constraints[n_basis].clear();
+      // set constraints (first hanging nodes, then velocity)
+      velocity_basis_constraints[n_basis].clear();
 
       DoFTools::make_hanging_node_constraints(
-        dof_handler, modified_basis_constraints[n_basis]);
+        dof_handler, velocity_basis_constraints[n_basis]);
 
       VectorTools::interpolate_boundary_values(
         dof_handler,
         /* boundary_id*/ 0,
         std_shape_function_stokes,
-        modified_basis_constraints[n_basis],
+        velocity_basis_constraints[n_basis],
         fe.component_mask(velocities));
 
-      modified_basis_constraints[n_basis].close();
+      velocity_basis_constraints[n_basis].close();
     }
 
   std::vector<unsigned int> block_component(dim + 1, 0);
@@ -243,10 +253,15 @@ DivergenceStabilizedBasis::setup_basis_dofs()
   const std::vector<types::global_dof_index> dofs_per_block =
     DoFTools::count_dofs_per_fe_block(dof_handler, block_component);
 
-  for (unsigned int n_basis = 0; n_basis < modified_basis.size(); ++n_basis)
+  for (unsigned int n_basis = 0; n_basis < velocity_basis.size(); ++n_basis)
     {
-      modified_basis[n_basis].reinit(dofs_per_block);
+      velocity_basis[n_basis].reinit(dofs_per_block);
       system_rhs[n_basis].reinit(dofs_per_block);
+    }
+  for (unsigned int n_basis = 0; n_basis < pressure_basis.size(); ++n_basis)
+    {
+      pressure_basis[n_basis].reinit(dofs_per_block);
+      system_rhs[velocity_basis.size() + n_basis].reinit(dofs_per_block);
     }
 
   if (parameters.verbose)
@@ -257,6 +272,7 @@ DivergenceStabilizedBasis::setup_basis_dofs()
     }
 }
 
+template <int dim>
 void
 DivergenceStabilizedBasis::assemble_system()
 {
@@ -268,143 +284,119 @@ DivergenceStabilizedBasis::assemble_system()
 
       timer.restart();
     }
+
+  assembled_matrix         = 0;
+  assembled_preconditioner = 0;
+  system_rhs               = 0;
+  global_rhs               = 0;
+
   // Choose appropriate quadrature rules
-  QGauss<3> quadrature_formula(parameters.degree + 2);
+  QGauss<dim> quadrature_formula(parameters.velocity_degree + 2);
 
   // Get relevant quantities to be updated from finite element
-  FEValues<3> fe_values(fe,
-                        quadrature_formula,
-                        update_values | update_gradients |
-                          update_quadrature_points | update_JxW_values);
+  FEValues<dim> fe_values(fe,
+                          quadrature_formula,
+                          update_values | update_gradients |
+                            update_quadrature_points | update_JxW_values);
 
   // Define some abbreviations
   const unsigned int dofs_per_cell = fe.dofs_per_cell;
   const unsigned int n_q_points    = quadrature_formula.size();
 
   // Declare local contributions and reserve memory
-  FullMatrix<double>          local_matrix(dofs_per_cell, dofs_per_cell);
-  Vector<double>              local_rhs(dofs_per_cell);
-  std::vector<Vector<double>> local_rhs_v(GeometryInfo<dim>::faces_per_cell,
-                                          Vector<double>(dofs_per_cell));
+  FullMatrix<double> local_matrix(dofs_per_cell, dofs_per_cell);
+  FullMatrix<double> local_preconditioner_matrix(dofs_per_cell, dofs_per_cell);
+  Vector<double>     local_global_rhs(dofs_per_cell);
+  std::vector<Vector<double>> local_system_rhs(
+    fe.base_element(0).n_dofs_per_cell(), Vector<double>(dofs_per_cell));
 
   std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
   // equation data
-  const EquationData::RightHandSideParsed right_hand_side(parameter_filename,
-                                                          /* n_components */ 1);
-  const EquationData::DiffusionInverse_A  a_inverse(parameter_filename);
-  const EquationData::ReactionRate        reaction_rate;
+  ShapeFun::ShapeFunctionVectorDivergence div_std_velocity_shape(
+    fe.base_element(0), global_cell);
 
   // allocate
-  std::vector<double>       rhs_values(n_q_points);
-  std::vector<double>       reaction_rate_values(n_q_points);
-  std::vector<Tensor<2, 3>> a_inverse_values(n_q_points);
+  std::vector<double>              temperature_forcing_values(n_q_points);
+  std::vector<std::vector<double>> div_std_velocity_shape_values(
+    fe.base_element(0).n_dofs_per_cell(), std::vector<double>(n_q_points));
 
   // define extractors
-  const FEValuesExtractors::Vector flux(0);
-  const FEValuesExtractors::Scalar concentration(3);
+  const FEValuesExtractors::Vector velocity(0);
+  const FEValuesExtractors::Scalar pressure(dim);
+
+  std::vector<SymmetricTensor<2, dim>> symgrad_phi_u(dofs_per_cell);
+  std::vector<double>                  div_phi_u(dofs_per_cell);
+  std::vector<double>                  phi_p(dofs_per_cell);
 
   // ------------------------------------------------------------------
   // loop over cells
-  typename DoFHandler<3>::active_cell_iterator cell =
-                                                 dof_handler.begin_active(),
-                                               endc = dof_handler.end();
+  typename DoFHandler<dim>::active_cell_iterator cell =
+                                                   dof_handler.begin_active(),
+                                                 endc = dof_handler.end();
   for (; cell != endc; ++cell)
     {
       fe_values.reinit(cell);
 
-      local_matrix = 0;
-      local_rhs    = 0;
+      // Reset local matrices
+      local_matrix     = 0;
+      local_global_rhs = 0;
 
+      // Get function values
       for (unsigned int n_basis = 0;
-           n_basis < GeometryInfo<dim>::faces_per_cell;
+           n_basis < fe.base_element(0).n_dofs_per_cell();
            ++n_basis)
         {
-          local_rhs_v[n_basis] = 0;
+          local_system_rhs[n_basis] = 0;
+          div_std_velocity_shape.set_shape_index(n_basis);
+          div_std_velocity_shape.value_list(
+            fe_values.get_quadrature_points(),
+            div_std_velocity_shape_value[n_basis]);
         }
 
-      right_hand_side.value_list(fe_values.get_quadrature_points(), rhs_values);
-      reaction_rate.value_list(fe_values.get_quadrature_points(),
-                               reaction_rate_values);
-      a_inverse.value_list(fe_values.get_quadrature_points(), a_inverse_values);
+      temperature_forcing_ptr->value_list(fe_values.get_quadrature_points(),
+                                          temperature_forcing_values);
 
       // loop over quad points
       for (unsigned int q = 0; q < n_q_points; ++q)
         {
+          // Get the shape function values
+          for (unsigned int k = 0; k < dofs_per_cell; ++k)
+            {
+              symgrad_phi_u[k] = fe_values[velocities].symmetric_gradient(k, q);
+              div_phi_u[k]     = fe_values[velocities].divergence(k, q);
+              phi_p[k]         = fe_values[pressure].value(k, q);
+            }
+
           for (unsigned int i = 0; i < dofs_per_cell; ++i)
             {
-              // Test functions
-              const Tensor<1, 3> phi_i_sigma = fe_values[flux].value(i, q);
-              const double div_phi_i_sigma   = fe_values[flux].divergence(i, q);
-              const double phi_i_u = fe_values[concentration].value(i, q);
-
               for (unsigned int j = 0; j < dofs_per_cell; ++j)
                 {
-                  // Trial functions
-                  const Tensor<1, 3> phi_j_sigma = fe_values[flux].value(j, q);
-                  const double       div_phi_j_sigma =
-                    fe_values[flux].divergence(j, q);
-                  const double phi_j_u = fe_values[concentration].value(j, q);
-
-                  /*
-                   * Discretize
-                   * K^{-1}sigma + grad(u) = 0
-                   * div(sigma) + alpha*u = f , where
-                   * alpha<0 (this is important) This is
-                   * the simplest form of a
-                   * diffusion-reaction equation where an
-                   * anisotropic diffusion and reaction
-                   * are in balance in a heterogeneous
-                   * medium. A multiscale reaction rate is
-                   * also possible and can easily be
-                   * added.
-                   */
                   local_matrix(i, j) +=
-                    (phi_i_sigma * a_inverse_values[q] *
-                       phi_j_sigma               /* Block (0, 0)*/
-                     - div_phi_i_sigma * phi_j_u /* Block (0, 1)*/
-                     + phi_i_u * div_phi_j_sigma /* Block (1, 0)*/
-                     + reaction_rate_values[q] * phi_i_u *
-                         phi_j_u /* Block (1, 1)*/
-                     ) *
+                    (2 * (symgrad_phi_u[i] * symgrad_phi_u[j]) -
+                     div_phi_u[i] * phi_p[j] - phi_p[i] * div_phi_u[j]) *
                     fe_values.JxW(q);
+
+                  local_preconditioner_matrix(i, j) +=
+                    (phi_p[i] * phi_p[j]) * fe_values.JxW(q);
                 } // end for ++j
 
               // Only for use in global assembly
-              local_rhs(i) += phi_i_u * rhs_values[q] * fe_values.JxW(q);
+              local_global_rhs(i) +=
+                phi_i_p * temperature_forcing_values[q] * fe_values.JxW(q);
 
-              // Only for use in local solving. Critical for
-              // Darcy type problem. (Think of LBB between
-              // RT0-DGQ0)
+              // The right-hand side should be zero apart from the pressure
+              // component. This needs to be processed later to contain the
+              // orthogonal projection of the divergence of the velocity shape
+              // function in the pressure componenent
               for (unsigned int n_basis = 0;
-                   n_basis < GeometryInfo<dim>::faces_per_cell;
+                   n_basis < fe.base_element(0).n_dofs_per_cell();
                    ++n_basis)
                 {
-                  // Note the sign here.
-                  if (parameters.is_laplace)
-                    {
-                      const double scale = 1 / volume_measure;
-                      if (n_basis == 0)
-                        local_rhs_v[n_basis](i) +=
-                          -phi_i_u * scale * fe_values.JxW(q);
-                      if (n_basis == 1)
-                        local_rhs_v[n_basis](i) +=
-                          phi_i_u * scale * fe_values.JxW(q);
-                      if (n_basis == 2)
-                        local_rhs_v[n_basis](i) +=
-                          -phi_i_u * scale * fe_values.JxW(q);
-                      if (n_basis == 3)
-                        local_rhs_v[n_basis](i) +=
-                          phi_i_u * scale * fe_values.JxW(q);
-                      if (n_basis == 4)
-                        local_rhs_v[n_basis](i) +=
-                          -phi_i_u * scale * fe_values.JxW(q);
-                      if (n_basis == 5)
-                        local_rhs_v[n_basis](i) +=
-                          phi_i_u * scale * fe_values.JxW(q);
-                    }
-                  else
-                    local_rhs_v[n_basis](i) += 0;
+                  local_system_rhs[n_basis](i) +=
+                    (phi_i_p * 0 +
+                     phi_i_p * div_std_velocity_shape_value[n_basis][q]) *
+                    fe_values.JxW(q);
                 }
             } // end for ++i
         }     // end for ++q
@@ -413,7 +405,7 @@ DivergenceStabilizedBasis::assemble_system()
       cell->get_dof_indices(local_dof_indices);
       for (unsigned int i = 0; i < dofs_per_cell; ++i)
         {
-          global_rhs(local_dof_indices[i]) += local_rhs(i);
+          global_rhs(local_dof_indices[i]) += local_global_rhs(i);
         }
 
       // Add to global matrix. Take care of constraints later.
@@ -424,14 +416,18 @@ DivergenceStabilizedBasis::assemble_system()
               assembled_matrix.add(local_dof_indices[i],
                                    local_dof_indices[j],
                                    local_matrix(i, j));
+
+              assembled_preconditioner.add(local_dof_indices[i],
+                                           local_dof_indices[j],
+                                           local_preconditioner_matrix(i, j));
             }
 
           for (unsigned int n_basis = 0;
-               n_basis < GeometryInfo<dim>::faces_per_cell;
+               n_basis < fe.base_element(0).n_dofs_per_cell();
                ++n_basis)
             {
               system_rhs[n_basis](local_dof_indices[i]) +=
-                local_rhs_v[n_basis](i);
+                local_system_rhs[n_basis](i);
             }
         }
       // ------------------------------------------
@@ -445,6 +441,7 @@ DivergenceStabilizedBasis::assemble_system()
     }
 } // end assemble()
 
+template <int dim>
 void
 DivergenceStabilizedBasis::solve_direct(unsigned int n_basis)
 {
@@ -460,7 +457,7 @@ DivergenceStabilizedBasis::solve_direct(unsigned int n_basis)
 
   // for convenience define an alias
   const BlockVector<double> &system_rhs = system_rhs[n_basis];
-  BlockVector<double> &      solution   = modified_basis[n_basis];
+  BlockVector<double> &      solution   = velocity_basis[n_basis];
 
   // use direct solver
   SparseDirectUMFPACK A_inv;
@@ -468,7 +465,7 @@ DivergenceStabilizedBasis::solve_direct(unsigned int n_basis)
 
   A_inv.vmult(solution, system_rhs);
 
-  modified_basis_constraints[n_basis].distribute(solution);
+  velocity_basis_constraints[n_basis].distribute(solution);
 
   if (parameters.verbose)
     {
@@ -478,6 +475,7 @@ DivergenceStabilizedBasis::solve_direct(unsigned int n_basis)
     }
 }
 
+template <int dim>
 void
 DivergenceStabilizedBasis::solve_iterative(unsigned int n_basis)
 {
@@ -497,12 +495,12 @@ DivergenceStabilizedBasis::solve_iterative(unsigned int n_basis)
 
   // for convenience define an alias
   const BlockVector<double> &system_rhs = system_rhs[n_basis];
-  BlockVector<double> &      solution   = modified_basis[n_basis];
+  BlockVector<double> &      solution   = velocity_basis[n_basis];
 
   inner_schur_preconditioner = std::make_shared<
-    typename LinearSolvers::LocalInnerPreconditioner<3>::type>();
+    typename LinearAlgebra::LocalInnerPreconditioner<dim>::type>();
 
-  typename LinearSolvers::LocalInnerPreconditioner<3>::type::AdditionalData
+  typename LinearAlgebra::LocalInnerPreconditioner<dim>::type::AdditionalData
     data;
   inner_schur_preconditioner->initialize(system_matrix.block(0, 0), data);
 
@@ -526,16 +524,16 @@ DivergenceStabilizedBasis::solve_iterative(unsigned int n_basis)
     }
 
   // Construct inverse of upper left block
-  const LinearSolvers::InverseMatrix<
+  const LinearAlgebra::InverseMatrix<
     SparseMatrix<double>,
-    typename LinearSolvers::LocalInnerPreconditioner<3>::type>
+    typename LinearAlgebra::LocalInnerPreconditioner<dim>::type>
     A_inverse(system_matrix.block(0, 0), *inner_schur_preconditioner);
 
   Vector<double> tmp(system_rhs.block(0).size());
   {
     // Set up Schur complement
-    LinearSolvers::SchurComplement<
-      typename LinearSolvers::LocalInnerPreconditioner<3>::type>
+    LinearAlgebra::SchurComplement<
+      typename LinearAlgebra::LocalInnerPreconditioner<dim>::type>
       schur_complement(system_matrix, A_inverse, dof_handler);
 
     // Compute schur_rhs = -g + C*A^{-1}*f
@@ -567,7 +565,7 @@ DivergenceStabilizedBasis::solve_iterative(unsigned int n_basis)
 
     cg_solver.solve(schur_complement, solution.block(1), schur_rhs, Mp_inverse);
 
-    modified_basis_constraints[n_basis].distribute(solution);
+    velocity_basis_constraints[n_basis].distribute(solution);
 
     if (parameters.verbose)
       {
@@ -596,7 +594,7 @@ DivergenceStabilizedBasis::solve_iterative(unsigned int n_basis)
     // Solve for velocity
     A_inverse.vmult(solution.block(0), tmp);
 
-    modified_basis_constraints[n_basis].distribute(solution);
+    velocity_basis_constraints[n_basis].distribute(solution);
 
     if (parameters.verbose)
       {
@@ -615,102 +613,125 @@ DivergenceStabilizedBasis::solve_iterative(unsigned int n_basis)
     }
 }
 
+template <int dim>
+void
+DivergenceStabilizedBasis::project_standard_basis_on_pressure_space()
+{
+  const unsigned int dofs_per_cell_p = fe.base_element(1).n_dofs_per_cell();
 
+  // Quadrature used for projection
+  QGauss<dim>     quad_rule(parameters.velocity_degree + 1);
+  DoFHandler<dim> pressure_dof_handler(triangulation);
+  pressure_dof_handler.distribute_dofs(fe.base_element(1));
 
+  Functions::ZeroFunction<dim>       zero_fun_vector(dim);
+  ShapeFun::ShapeFunctionScalar<dim> std_basis_pressure(fe.base_element(1),
+                                                        global_cell);
+
+  // zero_fun_and_std_basis_pressure
+  ShapeFun::FunctionConcatinator<dim> zero_fun_and_std_basis_pressure(
+    zero_function, std_basis_pressure);
+
+  for (unsigned int index_pressure_dof = 0;
+       index_pressure_dof < dofs_per_cell_p;
+       ++index_pressure_dof)
+    {
+      std_basis_pressure.set_index(index_pressure_dof);
+
+      VectorTools::project(stokes_dof_handler,
+                           AffineConstraints<double>(),
+                           quad_rule,
+                           zero_fun_and_std_basis_pressure,
+                           pressure_basis[index_pressure_dof]);
+    }
+}
+
+template <int dim>
 void
 DivergenceStabilizedBasis::assemble_global_element_matrix()
 {
   // First, reset.
   global_element_matrix = 0;
+  global_element_rhs    = 0;
 
   // Get lengths of tmp vectors for assembly
-  std::vector<types::global_dof_index> dofs_per_component =
-    DoFTools::count_dofs_per_fe_component(dof_handler);
-  const unsigned int n_sigma = dofs_per_component[0],
-                     n_u     = dofs_per_component[3];
+  const std::vector<types::global_dof_index> dofs_per_block =
+    DoFTools::count_dofs_per_fe_block(dof_handler, block_component);
+  const unsigned int n_u = dofs_per_block[0];
+  const unsigned int n_p = dofs_per_block[1];
 
-  Vector<double> tmp_u(n_u), tmp_sigma(n_sigma);
+  Vector<double> tmp_u(n_u), tmp_p(n_p);
 
   // This assembles the local contribution to the global global matrix
   // with an algebraic trick. It uses the local system matrix stored in
   // the respective basis object.
   unsigned int block_row, block_col;
 
-  BlockVector<double> *test_vec_ptr, *trial_vec_ptr;
+  Vector<double> *      test_vec_ptr, *trial_vec_ptr;
+  SparseMatrix<double> *relevant_block;
 
-  for (unsigned int i_test = 0; i_test < length_system_basis; ++i_test)
+  const unsigned int dofs_per_cell   = fe.dofs_per_cell;
+  const unsigned int dofs_per_cell_u = fe.base_element(0).n_dofs_per_cell();
+  const unsigned int dofs_per_cell_p = fe.base_element(1).n_dofs_per_cell();
+
+  for (unsigned int i_test = 0; i_test < dofs_per_cell; ++i_test)
     {
-      test_vec_ptr =
-        &(modified_basis.at(i_test % GeometryInfo<dim>::faces_per_cell));
-
-      if (i_test < GeometryInfo<dim>::faces_per_cell)
-        block_row = 0;
-      else
-        block_row = 1;
-
-      for (unsigned int i_trial = 0; i_trial < length_system_basis; ++i_trial)
+      if (i_test < dofs_per_cell_u)
         {
-          trial_vec_ptr =
-            &(modified_basis.at(i_trial % GeometryInfo<dim>::faces_per_cell));
+          test_vec_ptr = &(velocity_basis[i_test].block(0));
+          block_row    = 0;
+        }
+      else
+        {
+          test_vec_ptr = &(pressure_basis[i_test - dofs_per_cell_u].block(1));
+          block_row    = 1;
+        }
 
-          if (i_trial < GeometryInfo<dim>::faces_per_cell)
-            block_col = 0;
+      for (unsigned int i_trial = 0; i_trial < dofs_per_cell; ++i_trial)
+        {
+          if (i_trial < dofs_per_cell_u)
+            {
+              block_col     = 0;
+              trial_vec_ptr = &(velocity_basis[i_trial].block(0));
+            }
           else
-            block_col = 1;
+            {
+              block_col = 1;
+              trial_vec_ptr =
+                &(pressure_basis[i_trial - dofs_per_cell_u].block(1));
+            }
+
+          relevant_block = &(assembled_matrix.block(block_row, block_col));
 
           if (block_row == 0) /* This means we are testing with sigma. */
             {
-              if (block_col == 0) /* This means trial function is sigma. */
-                {
-                  assembled_matrix.block(block_row, block_col)
-                    .vmult(tmp_sigma, trial_vec_ptr->block(block_col));
-                  global_element_matrix(i_test, i_trial) +=
-                    (test_vec_ptr->block(block_row) * tmp_sigma);
-                  tmp_sigma = 0;
-                }
-              if (block_col == 1) /* This means trial function is u. */
-                {
-                  assembled_matrix.block(block_row, block_col)
-                    .vmult(tmp_sigma, trial_vec_ptr->block(block_col));
-                  global_element_matrix(i_test, i_trial) +=
-                    (test_vec_ptr->block(block_row) * tmp_sigma);
-                  tmp_sigma = 0;
-                }
+              relevant_block->vmult(tmp_u, *trial_vec_ptr);
+              global_element_matrix(i_test, i_trial) += (*test_vec_ptr) * tmp_u;
+              tmp_u = 0;
             }  // end if
           else /* This means we are testing with u. */
             {
-              if (block_col == 0) /* This means trial function is sigma. */
-                {
-                  assembled_matrix.block(block_row, block_col)
-                    .vmult(tmp_u, trial_vec_ptr->block(block_col));
-                  global_element_matrix(i_test, i_trial) +=
-                    (test_vec_ptr->block(block_row) * tmp_u);
-                  tmp_u = 0;
-                }
-              if (block_col == 1) /* This means trial function is u. */
-                {
-                  assembled_matrix.block(block_row, block_col)
-                    .vmult(tmp_u, trial_vec_ptr->block(block_col));
-                  global_element_matrix(i_test, i_trial) +=
-                    test_vec_ptr->block(block_row) * tmp_u;
-                  tmp_u = 0;
-                }
-            } // end else
+              relevant_block->vmult(tmp_p, *trial_vec_ptr);
+              global_element_matrix(i_test, i_trial) += (*test_vec_ptr) * tmp_p;
+              tmp_p = 0;
+            } // end if
         }     // end for i_trial
 
-      if (i_test >= GeometryInfo<dim>::faces_per_cell)
+      if (i_test <= dofs_per_cell_u)
         {
-          block_row = 1;
+          // block_row = 0 in this case
+
           // If we are testing with u we possibly have a
           // right-hand side.
           global_element_rhs(i_test) +=
-            test_vec_ptr->block(block_row) * global_rhs.block(block_row);
+            (*test_vec_ptr) * global_rhs.block(block_row);
         }
     } // end for i_test
 
   is_built_global_element_matrix = true;
 }
 
+template <int dim>
 void
 DivergenceStabilizedBasis::output_basis()
 {
@@ -723,32 +744,32 @@ DivergenceStabilizedBasis::output_basis()
       timer.restart();
     }
 
-  for (unsigned int n_basis = 0; n_basis < GeometryInfo<dim>::faces_per_cell;
+  for (unsigned int n_basis = 0; n_basis < fe.base_element(0).n_dofs_per_cell();
        ++n_basis)
     {
-      BlockVector<double> &basis = modified_basis[n_basis];
+      BlockVector<double> &basis = velocity_basis[n_basis];
 
-      std::vector<std::string> solution_names(3, "sigma");
+      std::vector<std::string> solution_names(dim, "velocity");
       solution_names.push_back("u");
 
       std::vector<DataComponentInterpretation::DataComponentInterpretation>
         interpretation(
-          3, DataComponentInterpretation::component_is_part_of_vector);
+          dim, DataComponentInterpretation::component_is_part_of_vector);
       interpretation.push_back(
         DataComponentInterpretation::component_is_scalar);
 
-      DataOut<3> data_out;
+      DataOut<dim> data_out;
       data_out.attach_dof_handler(dof_handler);
 
       data_out.add_data_vector(basis,
                                solution_names,
-                               DataOut<3>::type_dof_data,
+                               DataOut<dim>::type_dof_data,
                                interpretation);
 
       data_out.build_patches();
 
       // filename
-      std::string filename = "basis_stokes-dq";
+      std::string filename = "basis_stokes";
       filename += ".div";
       filename += "." + Utilities::int_to_string(local_subdomain, 5);
       filename += ".cell-" + global_cell_id.to_string();
@@ -768,24 +789,25 @@ DivergenceStabilizedBasis::output_basis()
     }
 }
 
+template <int dim>
 void
 DivergenceStabilizedBasis::output_global_solution_in_cell()
 {
-  DataOut<3> data_out;
+  DataOut<dim> data_out;
   data_out.attach_dof_handler(dof_handler);
 
-  std::vector<std::string> solution_names(3, "sigma");
-  solution_names.emplace_back("u");
+  std::vector<std::string> solution_names(dim, "velocity");
+  solution_names.emplace_back("pressure");
 
   std::vector<DataComponentInterpretation::DataComponentInterpretation>
     data_component_interpretation(
-      3, DataComponentInterpretation::component_is_part_of_vector);
+      dim, DataComponentInterpretation::component_is_part_of_vector);
   data_component_interpretation.push_back(
     DataComponentInterpretation::component_is_scalar);
 
   data_out.add_data_vector(global_solution,
                            solution_names,
-                           DataOut<3>::type_dof_data,
+                           DataOut<dim>::type_dof_data,
                            data_component_interpretation);
 
   // Postprocess
@@ -810,72 +832,49 @@ DivergenceStabilizedBasis::set_global_weights(
   // reinitialize the global solution on this cell
   global_solution = 0;
 
-  const unsigned int dofs_per_cell_sigma = fe.base_element(0).n_dofs_per_cell();
-  const unsigned int dofs_per_cell_u     = fe.base_element(1).n_dofs_per_cell();
+  const unsigned int dofs_per_cell_u = fe.base_element(0).n_dofs_per_cell();
+  const unsigned int dofs_per_cell_p = fe.base_element(1).n_dofs_per_cell();
 
   // First set block 0
-  for (unsigned int i = 0; i < dofs_per_cell_sigma; ++i)
+  for (unsigned int i = 0; i < dofs_per_cell_u; ++i)
     global_solution.block(0).sadd(1,
                                   global_weights[i],
-                                  modified_basis[i].block(0));
+                                  velocity_basis[i].block(0));
 
   // Then set block 1
-  for (unsigned int i = 0; i < dofs_per_cell_u; ++i)
+  for (unsigned int i = 0; i < dofs_per_cell_p; ++i)
     global_solution.block(1).sadd(1,
-                                  global_weights[i + dofs_per_cell_sigma],
-                                  modified_basis[i].block(1));
+                                  global_weights[i + dofs_per_cell_u],
+                                  velocity_basis[i].block(1));
 
   is_set_global_weights = true;
 }
 
-void
-DivergenceStabilizedBasis::set_u_to_std()
-{
-  for (unsigned int i = 0; i < GeometryInfo<dim>::faces_per_cell; ++i)
-    modified_basis[i].block(1) = 1;
-}
-
+template <int dim>
 void
 DivergenceStabilizedBasis::project_velocity_divergence_on_pressure_space(
   unsigned int n_basis)
 {
-  // // Quadrature used for projection
-  // QGauss<3> quad_rule(3);
+  PreconditionJacobi mass_preconditioner;
+  mass_precomnditioner.initialize(assembled_preconditioner.block(1, 1));
 
-  // // Set up vector shape function from finite element on current cell
-  // ShapeFun::BasisRaviartThomas<3> std_shape_function_div(global_cell_it,
-  //                                                        /* degree */ 0);
+  const LinearAlgebra::InverseMatrix<SparseMatrix<double>, PreconditionJacobi>
+    pressure_mass_inverse(assembled_preconditioner.block(1, 1),
+                          mass_preconditioner);
 
-  // DoFHandler<3> dof_handler_fake(triangulation);
-  // dof_handler_fake.distribute_dofs(fe.base_element(0));
+  for (unsigned int n_basis = 0; n_basis < fe.base_element(0).n_dofs_per_cell();
+       ++n_basis)
+    {
+      // Copy the rhs from the assembled system since this is not exactly what
+      // we need (we need the orthogonal projection)
+      const Vector<double> rhs_tmp(velocity_basis[n_basis].block(1));
+      velocity_basis[n_basis].block(1) = 0;
 
-  // if (parameters.renumber_dofs)
-  //   {
-  //     throw std::runtime_error("Renumbering DoFs not allowed when sanity "
-  //                              "checking basis for sigma.");
-  //   }
-
-  // AffineConstraints<double> constraints;
-  // constraints.clear();
-  // DoFTools::make_hanging_node_constraints(dof_handler_fake, constraints);
-  // constraints.close();
-
-  // for (unsigned int i = 0; i < GeometryInfo<dim>::faces_per_cell; ++i)
-  //   {
-  //     modified_basis.at(i).block(0).reinit(dof_handler_fake.n_dofs());
-
-  //     std_shape_function_div.set_index(i);
-
-  //     VectorTools::project(dof_handler_fake,
-  //                          constraints,
-  //                          quad_rule,
-  //                          std_shape_function_div,
-  //                          modified_basis[i].block(0));
-  //   }
-
-  // dof_handler_fake.clear();
+      pressure_mass_inverse.vmult(velocity_basis[n_basis].block(1), rhs_tmp);
+    }
 }
 
+template <int dim>
 void
 DivergenceStabilizedBasis::set_filename_global()
 {
@@ -884,24 +883,28 @@ DivergenceStabilizedBasis::set_filename_global()
      global_cell_id.to_string() + ".vtu");
 }
 
+template <int dim>
 const FullMatrix<double> &
 DivergenceStabilizedBasis::get_global_element_matrix() const
 {
   return global_element_matrix;
 }
 
+template <int dim>
 const Vector<double> &
 DivergenceStabilizedBasis::get_global_element_rhs() const
 {
   return global_element_rhs;
 }
 
+template <int dim>
 const std::string &
 DivergenceStabilizedBasis::get_filename_global() const
 {
   return parameters.filename_global;
 }
 
+template <int dim>
 void
 DivergenceStabilizedBasis::run()
 {
@@ -929,17 +932,24 @@ DivergenceStabilizedBasis::run()
   setup_system_matrix();
 
   // Set up boundary conditions and other constraints
-  setup_basis_dofs_div();
+  setup_basis_dofs();
+
+  // Since we do not solve for a modified pressure just project all standard
+  // basis functions
+  project_standard_basis_on_pressure_space();
 
   // Assemble
   assemble_system();
 
-  for (unsigned int n_basis = 0; n_basis < GeometryInfo<dim>::faces_per_cell;
+  for (unsigned int n_basis = 0; n_basis < fe.base_element(0).n_dofs_per_cell();
        ++n_basis)
     {
+      // This is to make sure that the global divergence maps the modified
+      // velocity basis into the right space
       project_velocity_divergence_on_pressure_space(unsigned int n_basis);
 
-      // This is for curl.
+      // The assembled matrices do not contain boundary conditions so copy them
+      // and apply the constraints
       system_matrix.reinit(sparsity_pattern);
       preconditioner_matrix.reinit(preconditioner_sparsity_pattern);
 
@@ -947,9 +957,9 @@ DivergenceStabilizedBasis::run()
       preconditioer_matrix.copy_from(assembled_preconditioner);
 
       // Now take care of constraints
-      modified_basis_constraints[n_basis].condense(system_matrix,
+      velocity_basis_constraints[n_basis].condense(system_matrix,
                                                    system_rhs[n_basis]);
-      modified_basis_constraints[n_basis].condense(preconditioer_matrix,
+      velocity_basis_constraints[n_basis].condense(preconditioer_matrix,
                                                    system_rhs[n_basis]);
 
       // Now solve
@@ -962,14 +972,14 @@ DivergenceStabilizedBasis::run()
     } // end for
 
   {
-    // Free memory as much as possible
+    // Free as much memory as possible
     system_matrix.clear();
     preconditioner_matrix.clear();
     sparsity_pattern.reinit(0, 0);
     preconditioner_sparsity_pattern.reinit(0, 0);
-    for (unsigned int i = 0; i < GeometryInfo<dim>::faces_per_cell; ++i)
+    for (unsigned int i = 0; i < fe.base_element(0).n_dofs_per_cell(); ++i)
       {
-        modified_basis_constraints[i].clear();
+        velocity_basis_constraints[i].clear();
       }
   }
 

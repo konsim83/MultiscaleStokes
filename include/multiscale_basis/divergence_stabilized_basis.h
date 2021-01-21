@@ -14,6 +14,7 @@
 #include <deal.II/dofs/dof_renumbering.h>
 #include <deal.II/dofs/dof_tools.h>
 
+#include <deal.II/fe/fe_dgp.h>
 #include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/fe_system.h>
 #include <deal.II/fe/fe_values.h>
@@ -44,6 +45,10 @@
 
 // my headers
 #include <base/config.h>
+#include <functions/function_concatinator.hpp>
+#include <functions/shape_fun_vector.hpp>
+#include <functions/shape_fun_vector_divergence.hpp>
+#include <functions/shape_function_scalar.hpp>
 #include <linear_algebra/local_inner_preconditioner.hpp>
 #include <linear_algebra/schur_complement.hpp>
 #include <model_data/stokes_model_parameters.h>
@@ -62,8 +67,9 @@ public:
   DivergenceStabilizedBasis(
     const CoreModelData::Parameters &                  parameters,
     typename Triangulation<dim>::active_cell_iterator &global_cell,
-    CellId                                             first_cell,
+    bool                                               is_first_cell,
     unsigned int                                       local_subdomain,
+    CoreModelData::TemperatureForcing<dim> &           temperature_forcing,
     MPI_Comm                                           mpi_communicator);
 
   DivergenceStabilizedBasis(const DivergenceStabilizedBasis<dim> &other);
@@ -104,6 +110,9 @@ private:
   assemble_system();
 
   void
+  project_standard_basis_on_pressure_space();
+
+  void
   assemble_global_element_matrix();
 
   void
@@ -129,7 +138,7 @@ private:
   FESystem<dim>      fe;
   DoFHandler<dim>    dof_handler;
 
-  std::vector<AffineConstraints<double>> modified_basis_constraints;
+  std::vector<AffineConstraints<double>> velocity_basis_constraints;
 
   BlockSparsityPattern sparsity_pattern;
   BlockSparsityPattern preconditioner_sparsity_pattern;
@@ -142,7 +151,8 @@ private:
   BlockSparseMatrix<double> system_matrix;
   BlockSparseMatrix<double> preconditioner_matrix;
 
-  std::vector<BlockVector<double>> modified_basis;
+  std::vector<BlockVector<double>> velocity_basis;
+  std::vector<BlockVector<double>> pressure_basis;
   std::vector<BlockVector<double>> system_rhs;
 
   // This is only for global assembly
@@ -164,18 +174,21 @@ private:
 
   bool is_first_cell;
 
-  typename Triangulation<dim>::active_cell_iterator global_cell_it;
+  typename Triangulation<dim>::active_cell_iterator global_cell;
 
   const unsigned int local_subdomain;
 
   std::vector<Point<dim>> corner_points;
 
-  unsigned int length_system_basis;
+  SmartPointer<CoreModelData::TemperatureForcing<dim>> temperature_forcing_ptr;
 
   bool is_built_global_element_matrix;
   bool is_set_global_weights;
   bool is_set_cell_data;
 };
 
+// Extern template instantiations
+extern template class DivergenceStabilizedBasis<2>;
+extern template class DivergenceStabilizedBasis<3>;
 
 MSSTOKES_CLOSE_NAMESPACE
