@@ -1,5 +1,10 @@
 #pragma once
 
+// Deal.II
+#include <deal.II/fe/fe_update_flags.h>
+
+#include <deal.II/numerics/data_postprocessor.h>
+
 // MsStokes
 #include <base/config.h>
 

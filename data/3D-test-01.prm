@@ -12,10 +12,10 @@ subsection Stokes Model
 	set use locally conservative discretization = false
 	
 	# This is only for debugging purposes
-	set solver diagnostics level = 1
+	set solver diagnostics level = 2
     	
 	# Base name of outputfile
-	set filename output = boussinesq
+	set filename output = stokes
 	
 	# Name of outputfile without ending
 	set dirname output = data-output-3d
@@ -28,6 +28,10 @@ subsection Stokes Model
 	# This is only for the multiscale stabilized basis
 	set verbose basis = true
 	set refinements basis = 3
+
+	# This is the variance of the forcing
+	# temperature bubble (Gaussian).
+	set variance = 100
 end
 
 
@@ -35,7 +39,7 @@ subsection Physical Constants
 	  # Reference temperature
 	  #
 	  # Standard: 293.15 [K]
-	  set reference temperature = 0.5
+	  set reference temperature = 6
 
 	  # Air density
 	  #

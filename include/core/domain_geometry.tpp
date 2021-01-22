@@ -30,6 +30,8 @@ DomainGeometry<dim>::DomainGeometry()
                                  upper_right_corner,
                                  /* colorize */ true);
 
+  domain_diameter = GridTools::diameter(triangulation);
+
   std::vector<
     GridTools::PeriodicFacePair<typename Triangulation<dim>::cell_iterator>>
     periodicity_vector;

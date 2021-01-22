@@ -33,7 +33,8 @@ namespace CoreModelData
      */
     TemperatureForcing(const Point<dim> &center,
                        const double      reference_temperature,
-                       const double      expansion_coefficient);
+                       const double      expansion_coefficient,
+                       const double      variance);
 
 
     /*!
@@ -62,6 +63,7 @@ namespace CoreModelData
     Tensor<2, dim> covariance_matrix;
     const double   reference_temperature;
     const double   expansion_coefficient;
+    const double   variance;
   };
 } // namespace CoreModelData
 

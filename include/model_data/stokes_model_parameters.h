@@ -46,6 +46,8 @@ namespace CoreModelData
 
     bool         verbose_basis = true;
     unsigned int refinements_basis;
+
+    double variance;
   };
 
 } // namespace CoreModelData

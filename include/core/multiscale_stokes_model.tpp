@@ -20,7 +20,8 @@ MultiscaleStokesModel<dim>::MultiscaleStokesModel(
   , stokes_dof_handler(this->triangulation)
   , temperature_forcing(this->domain_center,
                         parameters.physical_constants.reference_temperature,
-                        parameters.physical_constants.expansion_coefficient)
+                        parameters.physical_constants.expansion_coefficient,
+                        /* variance */ parameters.variance)
 {}
 
 
@@ -464,7 +465,7 @@ MultiscaleStokesModel<dim>::assemble_stokes_system()
     {
       if (cell->is_locally_owned())
         {
-          typename std::map<CellId, BasisMap>::iterator it_basis =
+          typename BasisMap::iterator it_basis =
             cell_basis_map.find(cell->id());
 
           local_matrix = 0;
@@ -683,15 +684,13 @@ MultiscaleStokesModel<dim>::output_results()
   TimerOutput::Scope timer_section(this->computing_timer,
                                    "Postprocessing and output");
 
-  this->pcout << "   Writing Boussinesq solution for one timestep... "
+  this->pcout << "   Writing multiscale stabilized Stokes solution... "
               << std::flush;
 
   // ---------------------------------------------------
   // write local fine solution
-  typename std::map<CellId, BasisMap>::iterator it_basis =
-                                                  cell_basis_map.begin(),
-                                                it_endbasis =
-                                                  cell_basis_map.end();
+  typename BasisMap::iterator it_basis    = cell_basis_map.begin(),
+                              it_endbasis = cell_basis_map.end();
 
   for (; it_basis != it_endbasis; ++it_basis)
     {
@@ -710,11 +709,11 @@ MultiscaleStokesModel<dim>::output_results()
       filenames_on_cell.push_back(filename_list_list[i][j]);
   // ---------------------------------------------------
 
-  DataOut<3> data_out;
+  DataOut<dim> data_out;
   data_out.attach_dof_handler(stokes_dof_handler);
 
   // pvtu-record for all local fine outputs
-  if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
+  if (Utilities::MPI::this_mpi_process(this->mpi_communicator) == 0)
     {
       std::string filename_master = parameters.filename_output;
       filename_master += "_fine";

@@ -1,7 +1,7 @@
 #pragma once
 
 // My headers
-#include <multiscale_basis/divergence_stabilized_basis.tpp>
+#include <multiscale_basis/divergence_stabilized_basis.h>
 
 MSSTOKES_OPEN_NAMESPACE
 
@@ -14,8 +14,7 @@ DivergenceStabilizedBasis<dim>::DivergenceStabilizedBasis(
   CoreModelData::TemperatureForcing<dim> &           temperature_forcing,
   MPI_Comm                                           mpi_communicator)
   : mpi_communicator(mpi_communicator)
-  , parameters(parameters_ms)
-  , parameter_filename(parameter_filename_)
+  , parameters(parameters)
   , triangulation()
   , fe(FE_Q<dim>(parameters.stokes_velocity_degree),
        dim,
@@ -59,7 +58,6 @@ DivergenceStabilizedBasis<dim>::DivergenceStabilizedBasis(
   const DivergenceStabilizedBasis &other)
   : mpi_communicator(other.mpi_communicator)
   , parameters(other.parameters)
-  , parameter_filename(other.parameter_filename)
   , triangulation() // must be constructed deliberately, but is empty on
                     // copying anyway
   , fe(FE_Q<dim>(parameters.stokes_velocity_degree),
@@ -172,8 +170,9 @@ DivergenceStabilizedBasis<dim>::setup_system_matrix()
           coupling[c][d] = DoFTools::always;
         else
           coupling[c][d] = DoFTools::none;
-    DoFTools::make_sparsity_pattern(
-      dof_handler, coupling, dsp, velocity_basis_constraints, false);
+
+    DoFTools::make_sparsity_pattern(dof_handler, coupling, dsp);
+
     sparsity_pattern.copy_from(dsp);
   }
 
@@ -192,11 +191,11 @@ DivergenceStabilizedBasis<dim>::setup_system_matrix()
           preconditioner_coupling[c][d] = DoFTools::always;
         else
           preconditioner_coupling[c][d] = DoFTools::none;
+
     DoFTools::make_sparsity_pattern(dof_handler,
                                     preconditioner_coupling,
-                                    preconditioner_dsp,
-                                    constraints,
-                                    false);
+                                    preconditioner_dsp);
+
     preconditioner_sparsity_pattern.copy_from(preconditioner_dsp);
   }
 
@@ -357,7 +356,7 @@ DivergenceStabilizedBasis<dim>::assemble_system()
 
           div_std_velocity_shape.value_list(
             fe_values.get_quadrature_points(),
-            div_std_velocity_shape_value[n_basis]);
+            div_std_velocity_shape_values[n_basis]);
         }
 
       temperature_forcing_ptr->value_list(fe_values.get_quadrature_points(),
@@ -407,8 +406,7 @@ DivergenceStabilizedBasis<dim>::assemble_system()
                    ++n_basis)
                 {
                   local_system_rhs[n_basis](i) +=
-                    (phi_u[i] * 0 +
-                     phi_p[i] * div_std_velocity_shape_values[n_basis][q]) *
+                    phi_p[i] * div_std_velocity_shape_values[n_basis][q] *
                     fe_values.JxW(q);
                 }
             } // end for ++i
@@ -688,7 +686,7 @@ DivergenceStabilizedBasis<dim>::assemble_global_element_matrix()
 
   const unsigned int dofs_per_cell   = fe.dofs_per_cell;
   const unsigned int dofs_per_cell_u = fe.base_element(0).dofs_per_cell;
-  const unsigned int dofs_per_cell_p = fe.base_element(1).dofs_per_cell;
+  // const unsigned int dofs_per_cell_p = fe.base_element(1).dofs_per_cell;
 
   for (unsigned int i_test = 0; i_test < dofs_per_cell; ++i_test)
     {
@@ -939,8 +937,7 @@ DivergenceStabilizedBasis<dim>::set_global_weights(
 
 template <int dim>
 void
-DivergenceStabilizedBasis<dim>::project_velocity_divergence_on_pressure_space(
-  unsigned int n_basis)
+DivergenceStabilizedBasis<dim>::project_velocity_divergence_on_pressure_space()
 {
   PreconditionJacobi<SparseMatrix<double>> mass_preconditioner;
   mass_preconditioner.initialize(assembled_preconditioner.block(1, 1));
@@ -1029,13 +1026,13 @@ DivergenceStabilizedBasis<dim>::run()
   // Assemble
   assemble_system();
 
+  // This is to make sure that the global divergence maps the modified
+  // velocity basis into the right space
+  project_velocity_divergence_on_pressure_space();
+
   for (unsigned int n_basis = 0; n_basis < fe.base_element(0).dofs_per_cell;
        ++n_basis)
     {
-      // This is to make sure that the global divergence maps the modified
-      // velocity basis into the right space
-      project_velocity_divergence_on_pressure_space(n_basis);
-
       // The assembled matrices do not contain boundary conditions so copy them
       // and apply the constraints
       system_matrix.reinit(sparsity_pattern);

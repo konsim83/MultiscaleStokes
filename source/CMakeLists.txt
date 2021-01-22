@@ -43,7 +43,11 @@ print_all_args (
 add_library (MsStokes_LIBRARY SHARED ${MsStokes_TARGET_LIB_SRC})
 DEAL_II_SETUP_TARGET(MsStokes_LIBRARY)
 
-add_executable(MsStokes "main.cxx")
+add_executable(Stokes "stokes.cxx")
+DEAL_II_SETUP_TARGET(Stokes)
+TARGET_LINK_LIBRARIES(Stokes MsStokes_LIBRARY)
+
+add_executable(MsStokes "multi_stokes.cxx")
 DEAL_II_SETUP_TARGET(MsStokes)
 TARGET_LINK_LIBRARIES(MsStokes MsStokes_LIBRARY)
 

@@ -108,7 +108,7 @@ private:
   setup_basis_dofs();
 
   void
-  project_velocity_divergence_on_pressure_space(unsigned int n_basis);
+  project_velocity_divergence_on_pressure_space();
 
   void
   assemble_system();

@@ -104,6 +104,11 @@ CoreModelData::Parameters::declare_parameters(ParameterHandler &prm)
                       "3",
                       Patterns::Integer(0),
                       "Initial global refinement of local basis mesh.");
+
+    prm.declare_entry("variance",
+                      "0.1",
+                      Patterns::Double(0),
+                      "Variance of forcing temperature bubble.");
   }
   prm.leave_subsection();
 }
@@ -138,6 +143,8 @@ CoreModelData::Parameters::parse_parameters(ParameterHandler &prm)
 
     verbose_basis     = prm.get_bool("verbose basis");
     refinements_basis = prm.get_integer("refinements basis");
+
+    variance = prm.get_double("variance");
   }
   prm.leave_subsection();
 }

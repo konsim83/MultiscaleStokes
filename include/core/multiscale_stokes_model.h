@@ -134,11 +134,9 @@ private:
   /*!
    * Collect all file names of
    * basis objects on each processor.
-   *
-   * @return
    */
   std::vector<std::string>
-  collect_filenames_on_mpi_process();
+  collect_filenames_on_mpi_process() const;
 
   void
   output_results();

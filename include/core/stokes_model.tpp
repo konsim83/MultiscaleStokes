@@ -401,7 +401,8 @@ StokesModel<dim>::local_assemble_stokes_system(
   CoreModelData::TemperatureForcing<dim> temperature_forcing(
     this->domain_center,
     parameters.physical_constants.reference_temperature,
-    parameters.physical_constants.expansion_coefficient);
+    parameters.physical_constants.expansion_coefficient,
+    /* variance */ parameters.variance);
   std::vector<double> temperature_forcing_values(n_q_points);
   temperature_forcing.value_list(
     scratch.stokes_fe_values.get_quadrature_points(),
@@ -659,8 +660,7 @@ StokesModel<dim>::output_results()
   TimerOutput::Scope timer_section(this->computing_timer,
                                    "Postprocessing and output");
 
-  this->pcout << "   Writing Boussinesq solution for one timestep... "
-              << std::flush;
+  this->pcout << "   Writing Stokes solution... " << std::flush;
 
   // First the forcing projection with a different DoFHandler
   DoFHandler<dim> forcing_dof_handler(this->triangulation);
@@ -677,17 +677,21 @@ StokesModel<dim>::output_results()
   IndexSet locally_relevant_forcing_dofs;
   DoFTools::extract_locally_relevant_dofs(forcing_dof_handler,
                                           locally_relevant_forcing_dofs);
-  LA::MPI::Vector bouyancy_forcing(locally_owned_forcing_dofs,
-                                   locally_relevant_forcing_dofs,
-                                   this->mpi_communicator);
+  LA::MPI::Vector distributed_bouyancy_forcing(locally_owned_forcing_dofs);
+
   VectorTools::project(forcing_dof_handler,
                        no_constraints,
                        QGauss<dim>(parameters.stokes_velocity_degree + 1),
                        CoreModelData::TemperatureForcing<dim>(
                          this->domain_center,
                          parameters.physical_constants.reference_temperature,
-                         parameters.physical_constants.expansion_coefficient),
-                       bouyancy_forcing);
+                         parameters.physical_constants.expansion_coefficient,
+                         /* variance */ parameters.variance),
+                       distributed_bouyancy_forcing);
+
+  LA::MPI::Vector bouyancy_forcing(locally_relevant_forcing_dofs,
+                                   this->mpi_communicator);
+  bouyancy_forcing = distributed_bouyancy_forcing;
 
   // Now join the Stokes and the forcing dofs
   const FESystem<dim> joint_fe(stokes_fe, 1, forcing_fe, 1);

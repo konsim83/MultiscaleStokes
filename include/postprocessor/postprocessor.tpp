@@ -17,6 +17,7 @@ std::vector<std::string>
 Postprocessor<dim>::get_names() const
 {
   std::vector<std::string> solution_names(dim, "velocity");
+  solution_names.emplace_back("divergence");
   solution_names.emplace_back("pressure");
   solution_names.emplace_back("vertical_buoyancy_force");
   solution_names.emplace_back("partition");
@@ -30,11 +31,21 @@ template <int dim>
 std::vector<DataComponentInterpretation::DataComponentInterpretation>
 Postprocessor<dim>::get_data_component_interpretation() const
 {
+  // Velocity
   std::vector<DataComponentInterpretation::DataComponentInterpretation>
     interpretation(dim,
                    DataComponentInterpretation::component_is_part_of_vector);
+
+  // Divergence
   interpretation.push_back(DataComponentInterpretation::component_is_scalar);
+
+  // Pressure
   interpretation.push_back(DataComponentInterpretation::component_is_scalar);
+
+  // Vertical temperature forcing
+  interpretation.push_back(DataComponentInterpretation::component_is_scalar);
+
+  // Partition
   interpretation.push_back(DataComponentInterpretation::component_is_scalar);
 
   return interpretation;
@@ -69,16 +80,25 @@ Postprocessor<dim>::evaluate_vector_field(
    */
   for (unsigned int q = 0; q < n_quadrature_points; ++q)
     {
+      // Velocity
       for (unsigned int d = 0; d < dim; ++d)
         computed_quantities[q](d) = inputs.solution_values[q](d);
 
-      const double pressure       = (inputs.solution_values[q](dim));
-      computed_quantities[q](dim) = pressure;
+      // Divergence
+      computed_quantities[q](dim) = 0;
+      for (unsigned int d = dim; d < 2 * dim; ++d)
+        {
+          computed_quantities[q](dim) +=
+            inputs.solution_gradients[q][d - dim][d - dim];
+        }
+
+      const double pressure           = (inputs.solution_values[q](dim));
+      computed_quantities[q](dim + 1) = pressure;
 
       // should be negative since gravity points downward
-      computed_quantities[q](dim + 1) = -inputs.solution_values[q](dim + 1);
+      computed_quantities[q](dim + 2) = -inputs.solution_values[q](dim + 1);
 
-      computed_quantities[q](dim + 2) = partition;
+      computed_quantities[q](dim + 3) = partition;
     }
 }
 

@@ -6,17 +6,19 @@ template <int dim>
 CoreModelData::TemperatureForcing<dim>::TemperatureForcing(
   const Point<dim> &center,
   const double      reference_temperature,
-  const double      expansion_coefficient)
+  const double      expansion_coefficient,
+  const double      variance)
   : Function<dim>(1)
   , center(center)
   , reference_temperature(reference_temperature)
   , expansion_coefficient(expansion_coefficient)
+  , variance(variance)
 {
   covariance_matrix = 0;
 
   for (unsigned int d = 0; d < dim; ++d)
     {
-      covariance_matrix[d][d] = 0.1;
+      covariance_matrix[d][d] = variance;
     }
 }
 
@@ -35,6 +37,7 @@ CoreModelData::TemperatureForcing<dim>::value(const Point<dim> &p,
     sqrt(std::pow(2 * numbers::PI, dim));
 
   return (1 - expansion_coefficient * (temperature - reference_temperature));
+  // return temperature;
 }
 
 
@@ -56,6 +59,7 @@ CoreModelData::TemperatureForcing<dim>::value_list(
         exp(-0.5 * scalar_product(points[p] - center,
                                   covariance_matrix * (points[p] - center))) /
         sqrt(std::pow(2 * numbers::PI, dim));
+      // values[p] = temperature;
       values[p] =
         (1 - expansion_coefficient * (temperature - reference_temperature));
     }
