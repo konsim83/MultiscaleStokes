@@ -24,6 +24,10 @@ subsection Stokes Model
 	# (Each MPI process says hello. 
 	# Careful with many processes)
 	set hello from cluster = true
+
+	# This is only for the multiscale stabilized basis
+	set verbose basis = true
+	set refinements basis = 3
 end
 
 

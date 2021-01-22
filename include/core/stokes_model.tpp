@@ -648,90 +648,6 @@ StokesModel<dim>::solve()
 
 
 /////////////////////////////////////////////////////////////
-// Postprocessor
-/////////////////////////////////////////////////////////////
-
-
-template <int dim>
-StokesModel<dim>::Postprocessor::Postprocessor(const unsigned int partition)
-  : partition(partition)
-{}
-
-
-
-template <int dim>
-std::vector<std::string>
-StokesModel<dim>::Postprocessor::get_names() const
-{
-  std::vector<std::string> solution_names(dim, "velocity");
-  solution_names.emplace_back("pressure");
-  solution_names.emplace_back("vertical_buoyancy_force");
-  solution_names.emplace_back("partition");
-
-  return solution_names;
-}
-
-
-
-template <int dim>
-std::vector<DataComponentInterpretation::DataComponentInterpretation>
-StokesModel<dim>::Postprocessor::get_data_component_interpretation() const
-{
-  std::vector<DataComponentInterpretation::DataComponentInterpretation>
-    interpretation(dim,
-                   DataComponentInterpretation::component_is_part_of_vector);
-  interpretation.push_back(DataComponentInterpretation::component_is_scalar);
-  interpretation.push_back(DataComponentInterpretation::component_is_scalar);
-  interpretation.push_back(DataComponentInterpretation::component_is_scalar);
-
-  return interpretation;
-}
-
-
-
-template <int dim>
-UpdateFlags
-StokesModel<dim>::Postprocessor::get_needed_update_flags() const
-{
-  return update_values | update_gradients | update_quadrature_points;
-}
-
-
-
-template <int dim>
-void
-StokesModel<dim>::Postprocessor::evaluate_vector_field(
-  const DataPostprocessorInputs::Vector<dim> &inputs,
-  std::vector<Vector<double>> &               computed_quantities) const
-{
-  const unsigned int n_quadrature_points = inputs.solution_values.size();
-
-  Assert(inputs.solution_gradients.size() == n_quadrature_points,
-         ExcInternalError());
-  Assert(computed_quantities.size() == n_quadrature_points, ExcInternalError());
-  Assert(inputs.solution_values[0].size() == dim + 2, ExcInternalError());
-
-  /*
-   * TODO: Rescale to physical quantities here.
-   */
-  for (unsigned int q = 0; q < n_quadrature_points; ++q)
-    {
-      for (unsigned int d = 0; d < dim; ++d)
-        computed_quantities[q](d) = inputs.solution_values[q](d);
-
-      const double pressure       = (inputs.solution_values[q](dim));
-      computed_quantities[q](dim) = pressure;
-
-      // should be negative since gravity points downward
-      computed_quantities[q](dim + 1) = -inputs.solution_values[q](dim + 1);
-
-      computed_quantities[q](dim + 2) = partition;
-    }
-}
-
-
-
-/////////////////////////////////////////////////////////////
 // Output results
 /////////////////////////////////////////////////////////////
 
@@ -849,7 +765,7 @@ StokesModel<dim>::output_results()
   locally_relevant_joint_solution = joint_solution;
 
 
-  Postprocessor postprocessor(
+  Postprocessor<dim> postprocessor(
     Utilities::MPI::this_mpi_process(this->mpi_communicator));
 
   DataOut<dim> data_out;

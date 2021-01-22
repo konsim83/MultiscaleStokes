@@ -11,6 +11,8 @@ CoreModelData::Parameters::Parameters(const std::string &parameter_filename)
   , use_locally_conservative_discretization(false)
   , solver_diagnostics_print_level(1)
   , hello_from_cluster(false)
+  , verbose_basis(false)
+  , refinements_basis((space_dimension == 2 ? 4 : 3))
 {
   ParameterHandler prm;
   CoreModelData::Parameters::declare_parameters(prm);
@@ -92,6 +94,16 @@ CoreModelData::Parameters::declare_parameters(ParameterHandler &prm)
       "false",
       Patterns::Bool(),
       "Output some (node) information of each MPI process (rank, node name, number of threads).");
+
+    prm.declare_entry("verbose basis",
+                      "false",
+                      Patterns::Bool(),
+                      "Increase verbosity level of basis computation.");
+
+    prm.declare_entry("refinements basis",
+                      "3",
+                      Patterns::Integer(0),
+                      "Initial global refinement of local basis mesh.");
   }
   prm.leave_subsection();
 }
@@ -123,6 +135,9 @@ CoreModelData::Parameters::parse_parameters(ParameterHandler &prm)
     dirname_output  = prm.get("dirname output");
 
     hello_from_cluster = prm.get_bool("hello from cluster");
+
+    verbose_basis     = prm.get_bool("verbose basis");
+    refinements_basis = prm.get_integer("refinements basis");
   }
   prm.leave_subsection();
 }

@@ -1,12 +1,12 @@
 #pragma once
 
 // My headers
-#include <multiscale_basis/divergence_conforming_basis.h>
+#include <multiscale_basis/divergence_stabilized_basis.tpp>
 
 MSSTOKES_OPEN_NAMESPACE
 
 template <int dim>
-DivergenceStabilizedBasis::DivergenceStabilizedBasis(
+DivergenceStabilizedBasis<dim>::DivergenceStabilizedBasis(
   const CoreModelData::Parameters &                  parameters,
   typename Triangulation<dim>::active_cell_iterator &global_cell,
   bool                                               is_first_cell,
@@ -17,7 +17,7 @@ DivergenceStabilizedBasis::DivergenceStabilizedBasis(
   , parameters(parameters_ms)
   , parameter_filename(parameter_filename_)
   , triangulation()
-  , fe(FE_Q<dim>(parameters.velocity_degree),
+  , fe(FE_Q<dim>(parameters.stokes_velocity_degree),
        dim,
        (parameters.use_locally_conservative_discretization ?
           static_cast<const FiniteElement<dim> &>(
@@ -26,11 +26,11 @@ DivergenceStabilizedBasis::DivergenceStabilizedBasis(
             FE_Q<dim>(parameters.stokes_velocity_degree - 1))),
        1)
   , dof_handler(triangulation)
-  , velocity_basis_constraints(fe.base_element(0).n_dofs_per_cell)
+  , velocity_basis_constraints(fe.base_element(0).dofs_per_cell)
   , sparsity_pattern()
-  , velocity_basis(fe.base_element(0).n_dofs_per_cell)
-  , pressure_basis(fe.base_element(1).n_dofs_per_cell)
-  , system_rhs(fe.base_element(0).n_dofs_per_cell)
+  , velocity_basis(fe.base_element(0).dofs_per_cell)
+  , pressure_basis(fe.base_element(1).dofs_per_cell)
+  , system_rhs(fe.base_element(0).dofs_per_cell)
   , global_element_matrix(fe.dofs_per_cell, fe.dofs_per_cell)
   , global_element_rhs(fe.dofs_per_cell)
   , global_weights(fe.dofs_per_cell, 0)
@@ -55,7 +55,7 @@ DivergenceStabilizedBasis::DivergenceStabilizedBasis(
 }
 
 template <int dim>
-DivergenceStabilizedBasis::DivergenceStabilizedBasis(
+DivergenceStabilizedBasis<dim>::DivergenceStabilizedBasis(
   const DivergenceStabilizedBasis &other)
   : mpi_communicator(other.mpi_communicator)
   , parameters(other.parameters)
@@ -105,11 +105,11 @@ DivergenceStabilizedBasis::DivergenceStabilizedBasis(
 }
 
 template <int dim>
-DivergenceStabilizedBasis::~DivergenceStabilizedBasis()
+DivergenceStabilizedBasis<dim>::~DivergenceStabilizedBasis()
 {
   system_matrix.clear();
 
-  for (unsigned int n_basis = 0; n_basis < fe.base_element(0).n_dofs_per_cell();
+  for (unsigned int n_basis = 0; n_basis < fe.base_element(0).dofs_per_cell;
        ++n_basis)
     {
       velocity_basis_constraints[n_basis].clear();
@@ -120,7 +120,7 @@ DivergenceStabilizedBasis::~DivergenceStabilizedBasis()
 
 template <int dim>
 void
-DivergenceStabilizedBasis::setup_grid()
+DivergenceStabilizedBasis<dim>::setup_grid()
 {
   Assert(is_set_cell_data, ExcMessage("Cell data must be set first."));
 
@@ -128,12 +128,12 @@ DivergenceStabilizedBasis::setup_grid()
                               corner_points,
                               /* colorize faces */ false);
 
-  triangulation.refine_global(parameters.n_refine_local);
+  triangulation.refine_global(parameters.refinements_basis);
 }
 
 template <int dim>
 void
-DivergenceStabilizedBasis::setup_system_matrix()
+DivergenceStabilizedBasis<dim>::setup_system_matrix()
 {
   dof_handler.distribute_dofs(fe);
 
@@ -173,7 +173,7 @@ DivergenceStabilizedBasis::setup_system_matrix()
         else
           coupling[c][d] = DoFTools::none;
     DoFTools::make_sparsity_pattern(
-      dof_handler, coupling, dsp, constraints, false);
+      dof_handler, coupling, dsp, velocity_basis_constraints, false);
     sparsity_pattern.copy_from(dsp);
   }
 
@@ -209,13 +209,13 @@ DivergenceStabilizedBasis::setup_system_matrix()
 
 template <int dim>
 void
-DivergenceStabilizedBasis::setup_basis_dofs()
+DivergenceStabilizedBasis<dim>::setup_basis_dofs()
 {
   Assert(is_set_cell_data, ExcMessage("Cell data must be set first."));
 
   Timer timer;
 
-  if (parameters.verbose)
+  if (parameters.verbose_basis)
     {
       std::cout << "	Setting up dofs for H(div) part.....";
 
@@ -225,10 +225,10 @@ DivergenceStabilizedBasis::setup_basis_dofs()
   ShapeFun::ShapeFunctionVector<dim> std_shape_function_stokes(
     fe.base_element(0), global_cell);
 
-  FEValuesExtractors::Vector velocities(0);
+  FEValuesExtractors::Vector velocity(0);
   for (unsigned int n_basis = 0; n_basis < velocity_basis.size(); ++n_basis)
     {
-      std_shape_function_stokes.set_index(n_basis);
+      std_shape_function_stokes.set_shape_fun_index(n_basis);
 
       // set constraints (first hanging nodes, then velocity)
       velocity_basis_constraints[n_basis].clear();
@@ -241,7 +241,7 @@ DivergenceStabilizedBasis::setup_basis_dofs()
         /* boundary_id*/ 0,
         std_shape_function_stokes,
         velocity_basis_constraints[n_basis],
-        fe.component_mask(velocities));
+        fe.component_mask(velocity));
 
       velocity_basis_constraints[n_basis].close();
     }
@@ -264,7 +264,7 @@ DivergenceStabilizedBasis::setup_basis_dofs()
       system_rhs[velocity_basis.size() + n_basis].reinit(dofs_per_block);
     }
 
-  if (parameters.verbose)
+  if (parameters.verbose_basis)
     {
       timer.stop();
       std::cout << "done in   " << timer.cpu_time() << "   seconds."
@@ -274,10 +274,10 @@ DivergenceStabilizedBasis::setup_basis_dofs()
 
 template <int dim>
 void
-DivergenceStabilizedBasis::assemble_system()
+DivergenceStabilizedBasis<dim>::assemble_system()
 {
   Timer timer;
-  if (parameters.verbose)
+  if (parameters.verbose_basis)
     {
       std::cout << "	Assembling local linear system in cell   "
                 << global_cell_id.to_string() << ".....";
@@ -287,11 +287,15 @@ DivergenceStabilizedBasis::assemble_system()
 
   assembled_matrix         = 0;
   assembled_preconditioner = 0;
-  system_rhs               = 0;
   global_rhs               = 0;
+  for (unsigned int n_basis = 0; n_basis < fe.base_element(0).dofs_per_cell;
+       ++n_basis)
+    {
+      system_rhs[n_basis] = 0;
+    }
 
   // Choose appropriate quadrature rules
-  QGauss<dim> quadrature_formula(parameters.velocity_degree + 2);
+  QGauss<dim> quadrature_formula(parameters.stokes_velocity_degree + 2);
 
   // Get relevant quantities to be updated from finite element
   FEValues<dim> fe_values(fe,
@@ -307,8 +311,8 @@ DivergenceStabilizedBasis::assemble_system()
   FullMatrix<double> local_matrix(dofs_per_cell, dofs_per_cell);
   FullMatrix<double> local_preconditioner_matrix(dofs_per_cell, dofs_per_cell);
   Vector<double>     local_global_rhs(dofs_per_cell);
-  std::vector<Vector<double>> local_system_rhs(
-    fe.base_element(0).n_dofs_per_cell(), Vector<double>(dofs_per_cell));
+  std::vector<Vector<double>> local_system_rhs(fe.base_element(0).dofs_per_cell,
+                                               Vector<double>(dofs_per_cell));
 
   std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
@@ -319,12 +323,13 @@ DivergenceStabilizedBasis::assemble_system()
   // allocate
   std::vector<double>              temperature_forcing_values(n_q_points);
   std::vector<std::vector<double>> div_std_velocity_shape_values(
-    fe.base_element(0).n_dofs_per_cell(), std::vector<double>(n_q_points));
+    fe.base_element(0).dofs_per_cell, std::vector<double>(n_q_points));
 
   // define extractors
   const FEValuesExtractors::Vector velocity(0);
   const FEValuesExtractors::Scalar pressure(dim);
 
+  std::vector<Tensor<1, dim>>          phi_u(dofs_per_cell);
   std::vector<SymmetricTensor<2, dim>> symgrad_phi_u(dofs_per_cell);
   std::vector<double>                  div_phi_u(dofs_per_cell);
   std::vector<double>                  phi_p(dofs_per_cell);
@@ -343,12 +348,13 @@ DivergenceStabilizedBasis::assemble_system()
       local_global_rhs = 0;
 
       // Get function values
-      for (unsigned int n_basis = 0;
-           n_basis < fe.base_element(0).n_dofs_per_cell();
+      for (unsigned int n_basis = 0; n_basis < fe.base_element(0).dofs_per_cell;
            ++n_basis)
         {
           local_system_rhs[n_basis] = 0;
-          div_std_velocity_shape.set_shape_index(n_basis);
+
+          div_std_velocity_shape.set_shape_fun_index(n_basis);
+
           div_std_velocity_shape.value_list(
             fe_values.get_quadrature_points(),
             div_std_velocity_shape_value[n_basis]);
@@ -363,8 +369,9 @@ DivergenceStabilizedBasis::assemble_system()
           // Get the shape function values
           for (unsigned int k = 0; k < dofs_per_cell; ++k)
             {
-              symgrad_phi_u[k] = fe_values[velocities].symmetric_gradient(k, q);
-              div_phi_u[k]     = fe_values[velocities].divergence(k, q);
+              phi_u[k]         = fe_values[velocity].value(k, q);
+              symgrad_phi_u[k] = fe_values[velocity].symmetric_gradient(k, q);
+              div_phi_u[k]     = fe_values[velocity].divergence(k, q);
               phi_p[k]         = fe_values[pressure].value(k, q);
             }
 
@@ -373,7 +380,8 @@ DivergenceStabilizedBasis::assemble_system()
               for (unsigned int j = 0; j < dofs_per_cell; ++j)
                 {
                   local_matrix(i, j) +=
-                    (2 * (symgrad_phi_u[i] * symgrad_phi_u[j]) -
+                    (2 * parameters.physical_constants.kinematic_viscosity *
+                       (symgrad_phi_u[i] * symgrad_phi_u[j]) -
                      div_phi_u[i] * phi_p[j] - phi_p[i] * div_phi_u[j]) *
                     fe_values.JxW(q);
 
@@ -381,21 +389,26 @@ DivergenceStabilizedBasis::assemble_system()
                     (phi_p[i] * phi_p[j]) * fe_values.JxW(q);
                 } // end for ++j
 
+              const Tensor<1, dim> gravity =
+                CoreModelData::vertical_gravity_vector(
+                  fe_values.quadrature_point(q),
+                  parameters.physical_constants.gravity_constant);
+
               // Only for use in global assembly
-              local_global_rhs(i) +=
-                phi_i_p * temperature_forcing_values[q] * fe_values.JxW(q);
+              local_global_rhs(i) += temperature_forcing_values[q] *
+                                     (phi_u[i] * gravity) * fe_values.JxW(q);
 
               // The right-hand side should be zero apart from the pressure
               // component. This needs to be processed later to contain the
               // orthogonal projection of the divergence of the velocity shape
               // function in the pressure componenent
               for (unsigned int n_basis = 0;
-                   n_basis < fe.base_element(0).n_dofs_per_cell();
+                   n_basis < fe.base_element(0).dofs_per_cell;
                    ++n_basis)
                 {
                   local_system_rhs[n_basis](i) +=
-                    (phi_i_p * 0 +
-                     phi_i_p * div_std_velocity_shape_value[n_basis][q]) *
+                    (phi_u[i] * 0 +
+                     phi_p[i] * div_std_velocity_shape_values[n_basis][q]) *
                     fe_values.JxW(q);
                 }
             } // end for ++i
@@ -423,7 +436,7 @@ DivergenceStabilizedBasis::assemble_system()
             }
 
           for (unsigned int n_basis = 0;
-               n_basis < fe.base_element(0).n_dofs_per_cell();
+               n_basis < fe.base_element(0).dofs_per_cell;
                ++n_basis)
             {
               system_rhs[n_basis](local_dof_indices[i]) +=
@@ -433,7 +446,7 @@ DivergenceStabilizedBasis::assemble_system()
       // ------------------------------------------
     } // end for ++cell
 
-  if (parameters.verbose)
+  if (parameters.verbose_basis)
     {
       timer.stop();
       std::cout << "done in   " << timer.cpu_time() << "   seconds."
@@ -443,10 +456,10 @@ DivergenceStabilizedBasis::assemble_system()
 
 template <int dim>
 void
-DivergenceStabilizedBasis::solve_direct(unsigned int n_basis)
+DivergenceStabilizedBasis<dim>::solve_direct(unsigned int n_basis)
 {
   Timer timer;
-  if (parameters.verbose)
+  if (parameters.verbose_basis)
     {
       std::cout << "	Solving linear system (SparseDirectUMFPACK) in cell   "
                 << global_cell_id.to_string() << "   for basis   " << n_basis
@@ -456,18 +469,18 @@ DivergenceStabilizedBasis::solve_direct(unsigned int n_basis)
     }
 
   // for convenience define an alias
-  const BlockVector<double> &system_rhs = system_rhs[n_basis];
-  BlockVector<double> &      solution   = velocity_basis[n_basis];
+  const BlockVector<double> &this_system_rhs = system_rhs[n_basis];
+  BlockVector<double> &      solution        = velocity_basis[n_basis];
 
   // use direct solver
   SparseDirectUMFPACK A_inv;
   A_inv.initialize(system_matrix);
 
-  A_inv.vmult(solution, system_rhs);
+  A_inv.vmult(solution, this_system_rhs);
 
   velocity_basis_constraints[n_basis].distribute(solution);
 
-  if (parameters.verbose)
+  if (parameters.verbose_basis)
     {
       timer.stop();
       std::cout << "done in   " << timer.cpu_time() << "   seconds."
@@ -477,14 +490,14 @@ DivergenceStabilizedBasis::solve_direct(unsigned int n_basis)
 
 template <int dim>
 void
-DivergenceStabilizedBasis::solve_iterative(unsigned int n_basis)
+DivergenceStabilizedBasis<dim>::solve_iterative(unsigned int n_basis)
 {
   Timer timer;
   Timer inner_timer;
 
   // ------------------------------------------
   // Make a preconditioner for each system matrix
-  if (parameters.verbose)
+  if (parameters.verbose_basis)
     {
       std::cout << "	Computing preconditioner in cell   "
                 << global_cell_id.to_string() << "   for basis   " << n_basis
@@ -494,8 +507,8 @@ DivergenceStabilizedBasis::solve_iterative(unsigned int n_basis)
     }
 
   // for convenience define an alias
-  const BlockVector<double> &system_rhs = system_rhs[n_basis];
-  BlockVector<double> &      solution   = velocity_basis[n_basis];
+  const BlockVector<double> &this_system_rhs = system_rhs[n_basis];
+  BlockVector<double> &      solution        = velocity_basis[n_basis];
 
   inner_schur_preconditioner = std::make_shared<
     typename LinearAlgebra::LocalInnerPreconditioner<dim>::type>();
@@ -504,7 +517,7 @@ DivergenceStabilizedBasis::solve_iterative(unsigned int n_basis)
     data;
   inner_schur_preconditioner->initialize(system_matrix.block(0, 0), data);
 
-  if (parameters.verbose)
+  if (parameters.verbose_basis)
     {
       timer.stop();
       std::cout << "done in   " << timer.cpu_time() << "   seconds."
@@ -513,7 +526,7 @@ DivergenceStabilizedBasis::solve_iterative(unsigned int n_basis)
   // ------------------------------------------
 
   // Now solve.
-  if (parameters.verbose)
+  if (parameters.verbose_basis)
     {
       std::cout << "	Solving linear system (iteratively, with "
                    "preconditioner) in cell   "
@@ -529,45 +542,46 @@ DivergenceStabilizedBasis::solve_iterative(unsigned int n_basis)
     typename LinearAlgebra::LocalInnerPreconditioner<dim>::type>
     A_inverse(system_matrix.block(0, 0), *inner_schur_preconditioner);
 
-  Vector<double> tmp(system_rhs.block(0).size());
+  Vector<double> tmp(this_system_rhs.block(0).size());
   {
-    // Set up Schur complement
-    LinearAlgebra::SchurComplement<
-      typename LinearAlgebra::LocalInnerPreconditioner<dim>::type>
-      schur_complement(system_matrix, A_inverse, dof_handler);
-
     // Compute schur_rhs = -g + C*A^{-1}*f
-    Vector<double> schur_rhs(system_rhs.block(1).size());
+    Vector<double> schur_rhs(this_system_rhs.block(1).size());
 
-    A_inverse.vmult(tmp, system_rhs.block(0));
+    A_inverse.vmult(tmp, this_system_rhs.block(0));
     system_matrix.block(1, 0).vmult(schur_rhs, tmp);
-    schur_rhs -= system_rhs.block(1);
+    schur_rhs -= this_system_rhs.block(1);
 
-    if (parameters.verbose)
+    if (parameters.verbose_basis)
       {
         inner_timer.restart();
       }
 
-    LinearAlgebra::SchurComplement<typename InnerPreconditioner<dim>::type>
-                             schur_complement(system_matrix, A_inverse);
-    SolverControl            solver_control(solution.block(1).size(),
+    // Set up Schur complement
+    LinearAlgebra::SchurComplement<
+      typename LinearAlgebra::LocalInnerPreconditioner<dim>::type>
+      schur_complement(system_matrix, A_inverse);
+
+    SolverControl solver_control(solution.block(1).size(),
                                  1e-6 * schur_rhs.l2_norm(),
                                  /* log_history */ false,
                                  /* log_result */ false);
+
     SolverCG<Vector<double>> cg_solver(solver_control);
 
+    // This is the preconditioner of the outer preconditioner which is just the
+    // inverse mass on the pressure space
     SparseILU<double> preconditioner;
     preconditioner.initialize(preconditioner_matrix.block(1, 1),
                               SparseILU<double>::AdditionalData());
 
-    InverseMatrix<SparseMatrix<double>, SparseILU<double>> Mp_inverse(
-      preconditioner_matrix.block(1, 1), preconditioner);
+    const LinearAlgebra::InverseMatrix<SparseMatrix<double>, SparseILU<double>>
+      Mp_inverse(preconditioner_matrix.block(1, 1), preconditioner);
 
     cg_solver.solve(schur_complement, solution.block(1), schur_rhs, Mp_inverse);
 
     velocity_basis_constraints[n_basis].distribute(solution);
 
-    if (parameters.verbose)
+    if (parameters.verbose_basis)
       {
         inner_timer.stop();
 
@@ -581,7 +595,7 @@ DivergenceStabilizedBasis::solve_iterative(unsigned int n_basis)
   }
 
   {
-    if (parameters.verbose)
+    if (parameters.verbose_basis)
       {
         inner_timer.restart();
       }
@@ -589,14 +603,14 @@ DivergenceStabilizedBasis::solve_iterative(unsigned int n_basis)
     // use computed pressure to solve for velocity
     system_matrix.block(0, 1).vmult(tmp, solution.block(1));
     tmp *= -1;
-    tmp += system_rhs.block(0);
+    tmp += this_system_rhs.block(0);
 
     // Solve for velocity
     A_inverse.vmult(solution.block(0), tmp);
 
     velocity_basis_constraints[n_basis].distribute(solution);
 
-    if (parameters.verbose)
+    if (parameters.verbose_basis)
       {
         inner_timer.stop();
 
@@ -605,7 +619,7 @@ DivergenceStabilizedBasis::solve_iterative(unsigned int n_basis)
       }
   }
 
-  if (parameters.verbose)
+  if (parameters.verbose_basis)
     {
       timer.stop();
       std::cout << "		- done in   " << timer.cpu_time() << "   seconds."
@@ -615,12 +629,12 @@ DivergenceStabilizedBasis::solve_iterative(unsigned int n_basis)
 
 template <int dim>
 void
-DivergenceStabilizedBasis::project_standard_basis_on_pressure_space()
+DivergenceStabilizedBasis<dim>::project_standard_basis_on_pressure_space()
 {
-  const unsigned int dofs_per_cell_p = fe.base_element(1).n_dofs_per_cell();
+  const unsigned int dofs_per_cell_p = fe.base_element(1).dofs_per_cell;
 
   // Quadrature used for projection
-  QGauss<dim>     quad_rule(parameters.velocity_degree + 1);
+  QGauss<dim>     quad_rule(parameters.stokes_velocity_degree + 1);
   DoFHandler<dim> pressure_dof_handler(triangulation);
   pressure_dof_handler.distribute_dofs(fe.base_element(1));
 
@@ -630,15 +644,15 @@ DivergenceStabilizedBasis::project_standard_basis_on_pressure_space()
 
   // zero_fun_and_std_basis_pressure
   ShapeFun::FunctionConcatinator<dim> zero_fun_and_std_basis_pressure(
-    zero_function, std_basis_pressure);
+    zero_fun_vector, std_basis_pressure);
 
   for (unsigned int index_pressure_dof = 0;
        index_pressure_dof < dofs_per_cell_p;
        ++index_pressure_dof)
     {
-      std_basis_pressure.set_index(index_pressure_dof);
+      std_basis_pressure.set_shape_fun_index(index_pressure_dof);
 
-      VectorTools::project(stokes_dof_handler,
+      VectorTools::project(dof_handler,
                            AffineConstraints<double>(),
                            quad_rule,
                            zero_fun_and_std_basis_pressure,
@@ -648,13 +662,15 @@ DivergenceStabilizedBasis::project_standard_basis_on_pressure_space()
 
 template <int dim>
 void
-DivergenceStabilizedBasis::assemble_global_element_matrix()
+DivergenceStabilizedBasis<dim>::assemble_global_element_matrix()
 {
   // First, reset.
   global_element_matrix = 0;
   global_element_rhs    = 0;
 
   // Get lengths of tmp vectors for assembly
+  std::vector<unsigned int> block_component(dim + 1, 0);
+  block_component[dim] = 1;
   const std::vector<types::global_dof_index> dofs_per_block =
     DoFTools::count_dofs_per_fe_block(dof_handler, block_component);
   const unsigned int n_u = dofs_per_block[0];
@@ -671,8 +687,8 @@ DivergenceStabilizedBasis::assemble_global_element_matrix()
   SparseMatrix<double> *relevant_block;
 
   const unsigned int dofs_per_cell   = fe.dofs_per_cell;
-  const unsigned int dofs_per_cell_u = fe.base_element(0).n_dofs_per_cell();
-  const unsigned int dofs_per_cell_p = fe.base_element(1).n_dofs_per_cell();
+  const unsigned int dofs_per_cell_u = fe.base_element(0).dofs_per_cell;
+  const unsigned int dofs_per_cell_p = fe.base_element(1).dofs_per_cell;
 
   for (unsigned int i_test = 0; i_test < dofs_per_cell; ++i_test)
     {
@@ -733,10 +749,10 @@ DivergenceStabilizedBasis::assemble_global_element_matrix()
 
 template <int dim>
 void
-DivergenceStabilizedBasis::output_basis()
+DivergenceStabilizedBasis<dim>::output_basis()
 {
   Timer timer;
-  if (parameters.verbose)
+  if (parameters.verbose_basis)
     {
       std::cout << "	Writing local basis in cell   "
                 << global_cell_id.to_string() << ".....";
@@ -744,7 +760,7 @@ DivergenceStabilizedBasis::output_basis()
       timer.restart();
     }
 
-  for (unsigned int n_basis = 0; n_basis < fe.base_element(0).n_dofs_per_cell();
+  for (unsigned int n_basis = 0; n_basis < fe.base_element(0).dofs_per_cell;
        ++n_basis)
     {
       BlockVector<double> &basis = velocity_basis[n_basis];
@@ -781,7 +797,7 @@ DivergenceStabilizedBasis::output_basis()
       data_out.write_vtu(output);
     }
 
-  if (parameters.verbose)
+  if (parameters.verbose_basis)
     {
       timer.stop();
       std::cout << "done in   " << timer.cpu_time() << "   seconds."
@@ -791,39 +807,110 @@ DivergenceStabilizedBasis::output_basis()
 
 template <int dim>
 void
-DivergenceStabilizedBasis::output_global_solution_in_cell()
+DivergenceStabilizedBasis<dim>::output_global_solution_in_cell()
 {
+  Assert(is_set_global_weights,
+         ExcMessage("Global weights must be set before output."));
+
+  // First the forcing projection with a different DoFHandler
+  DoFHandler<dim> forcing_dof_handler(triangulation);
+  FE_Q<dim>       forcing_fe(parameters.stokes_velocity_degree);
+  forcing_dof_handler.distribute_dofs(forcing_fe);
+
+  AffineConstraints<double> no_constraints;
+  no_constraints.clear();
+  DoFTools::make_hanging_node_constraints(forcing_dof_handler, no_constraints);
+  no_constraints.close();
+
+  Vector<double> bouyancy_forcing(forcing_dof_handler.n_dofs());
+  VectorTools::project(forcing_dof_handler,
+                       no_constraints,
+                       QGauss<dim>(parameters.stokes_velocity_degree + 1),
+                       *temperature_forcing_ptr,
+                       bouyancy_forcing);
+
+  // Now join the Stokes and the forcing dofs
+  const FESystem<dim> joint_fe(fe, 1, forcing_fe, 1);
+
+  DoFHandler<dim> joint_dof_handler(triangulation);
+  joint_dof_handler.distribute_dofs(joint_fe);
+
+  Assert(joint_dof_handler.n_dofs() ==
+           dof_handler.n_dofs() + forcing_dof_handler.n_dofs(),
+         ExcInternalError());
+
+  Vector<double> joint_solution;
+
+  joint_solution.reinit(joint_dof_handler.n_dofs());
+
+  {
+    std::vector<types::global_dof_index> local_joint_dof_indices(
+      joint_fe.dofs_per_cell);
+    std::vector<types::global_dof_index> local_dof_indices(fe.dofs_per_cell);
+    std::vector<types::global_dof_index> local_forcing_dof_indices(
+      forcing_fe.dofs_per_cell);
+
+    typename DoFHandler<dim>::active_cell_iterator
+      joint_cell = joint_dof_handler.begin_active(),
+      joint_endc = joint_dof_handler.end(), cell = dof_handler.begin_active(),
+      forcing_cell = forcing_dof_handler.begin_active();
+    for (; joint_cell != joint_endc; ++joint_cell, ++cell, ++forcing_cell)
+      {
+        if (joint_cell->is_locally_owned())
+          {
+            joint_cell->get_dof_indices(local_joint_dof_indices);
+            cell->get_dof_indices(local_dof_indices);
+            forcing_cell->get_dof_indices(local_forcing_dof_indices);
+
+            for (unsigned int i = 0; i < joint_fe.dofs_per_cell; ++i)
+              if (joint_fe.system_to_base_index(i).first.first == 0)
+                {
+                  Assert(joint_fe.system_to_base_index(i).second <
+                           local_dof_indices.size(),
+                         ExcInternalError());
+
+                  joint_solution(local_joint_dof_indices[i]) = global_solution(
+                    local_dof_indices[joint_fe.system_to_base_index(i).second]);
+                }
+              else
+                {
+                  Assert(joint_fe.system_to_base_index(i).first.first == 1,
+                         ExcInternalError());
+                  Assert(joint_fe.system_to_base_index(i).second <
+                           local_forcing_dof_indices.size(),
+                         ExcInternalError());
+
+                  joint_solution(local_joint_dof_indices[i]) = bouyancy_forcing(
+                    local_forcing_dof_indices[joint_fe.system_to_base_index(i)
+                                                .second]);
+                }
+          } // end if is_locally_owned()
+      }     // end for ++joint_cell
+  }
+
+  Postprocessor<dim> postprocessor(
+    Utilities::MPI::this_mpi_process(mpi_communicator));
+
   DataOut<dim> data_out;
-  data_out.attach_dof_handler(dof_handler);
+  data_out.attach_dof_handler(joint_dof_handler);
 
-  std::vector<std::string> solution_names(dim, "velocity");
-  solution_names.emplace_back("pressure");
+  data_out.add_data_vector(joint_solution, postprocessor);
 
-  std::vector<DataComponentInterpretation::DataComponentInterpretation>
-    data_component_interpretation(
-      dim, DataComponentInterpretation::component_is_part_of_vector);
-  data_component_interpretation.push_back(
-    DataComponentInterpretation::component_is_scalar);
+  data_out.build_patches(parameters.stokes_velocity_degree);
 
-  data_out.add_data_vector(global_solution,
-                           solution_names,
-                           DataOut<dim>::type_dof_data,
-                           data_component_interpretation);
-
-  // Postprocess
-  std::unique_ptr<RTDQ_PostProcessor> postprocessor(
-    new RTDQ_PostProcessor(parameter_filename));
-  data_out.add_data_vector(global_solution, *postprocessor);
-
-  data_out.build_patches();
-
-  std::ofstream output(parameters.dirname_output + "/" +
-                       parameters.filename_global);
+  const std::string filename =
+    (parameters.filename_output + "." +
+     Utilities::int_to_string(triangulation.locally_owned_subdomain(), 4) +
+     ".vtu");
+  std::ofstream output(parameters.dirname_output + "/" + filename);
   data_out.write_vtu(output);
+
+  forcing_dof_handler.clear();
 }
 
+template <int dim>
 void
-DivergenceStabilizedBasis::set_global_weights(
+DivergenceStabilizedBasis<dim>::set_global_weights(
   const std::vector<double> &weights)
 {
   // Copy assignment of global weights
@@ -832,8 +919,8 @@ DivergenceStabilizedBasis::set_global_weights(
   // reinitialize the global solution on this cell
   global_solution = 0;
 
-  const unsigned int dofs_per_cell_u = fe.base_element(0).n_dofs_per_cell();
-  const unsigned int dofs_per_cell_p = fe.base_element(1).n_dofs_per_cell();
+  const unsigned int dofs_per_cell_u = fe.base_element(0).dofs_per_cell;
+  const unsigned int dofs_per_cell_p = fe.base_element(1).dofs_per_cell;
 
   // First set block 0
   for (unsigned int i = 0; i < dofs_per_cell_u; ++i)
@@ -852,17 +939,18 @@ DivergenceStabilizedBasis::set_global_weights(
 
 template <int dim>
 void
-DivergenceStabilizedBasis::project_velocity_divergence_on_pressure_space(
+DivergenceStabilizedBasis<dim>::project_velocity_divergence_on_pressure_space(
   unsigned int n_basis)
 {
-  PreconditionJacobi mass_preconditioner;
-  mass_precomnditioner.initialize(assembled_preconditioner.block(1, 1));
+  PreconditionJacobi<SparseMatrix<double>> mass_preconditioner;
+  mass_preconditioner.initialize(assembled_preconditioner.block(1, 1));
 
-  const LinearAlgebra::InverseMatrix<SparseMatrix<double>, PreconditionJacobi>
+  const LinearAlgebra::InverseMatrix<SparseMatrix<double>,
+                                     PreconditionJacobi<SparseMatrix<double>>>
     pressure_mass_inverse(assembled_preconditioner.block(1, 1),
                           mass_preconditioner);
 
-  for (unsigned int n_basis = 0; n_basis < fe.base_element(0).n_dofs_per_cell();
+  for (unsigned int n_basis = 0; n_basis < fe.base_element(0).dofs_per_cell;
        ++n_basis)
     {
       // Copy the rhs from the assembled system since this is not exactly what
@@ -876,37 +964,37 @@ DivergenceStabilizedBasis::project_velocity_divergence_on_pressure_space(
 
 template <int dim>
 void
-DivergenceStabilizedBasis::set_filename_global()
+DivergenceStabilizedBasis<dim>::set_filename_global()
 {
-  parameters.filename_global +=
+  parameters.filename_output +=
     ("." + Utilities::int_to_string(local_subdomain, 5) + ".cell-" +
      global_cell_id.to_string() + ".vtu");
 }
 
 template <int dim>
 const FullMatrix<double> &
-DivergenceStabilizedBasis::get_global_element_matrix() const
+DivergenceStabilizedBasis<dim>::get_global_element_matrix() const
 {
   return global_element_matrix;
 }
 
 template <int dim>
 const Vector<double> &
-DivergenceStabilizedBasis::get_global_element_rhs() const
+DivergenceStabilizedBasis<dim>::get_global_element_rhs() const
 {
   return global_element_rhs;
 }
 
 template <int dim>
 const std::string &
-DivergenceStabilizedBasis::get_filename_global() const
+DivergenceStabilizedBasis<dim>::get_filename_global() const
 {
-  return parameters.filename_global;
+  return parameters.filename_output;
 }
 
 template <int dim>
 void
-DivergenceStabilizedBasis::run()
+DivergenceStabilizedBasis<dim>::run()
 {
   Timer timer;
 
@@ -941,12 +1029,12 @@ DivergenceStabilizedBasis::run()
   // Assemble
   assemble_system();
 
-  for (unsigned int n_basis = 0; n_basis < fe.base_element(0).n_dofs_per_cell();
+  for (unsigned int n_basis = 0; n_basis < fe.base_element(0).dofs_per_cell;
        ++n_basis)
     {
       // This is to make sure that the global divergence maps the modified
       // velocity basis into the right space
-      project_velocity_divergence_on_pressure_space(unsigned int n_basis);
+      project_velocity_divergence_on_pressure_space(n_basis);
 
       // The assembled matrices do not contain boundary conditions so copy them
       // and apply the constraints
@@ -954,16 +1042,16 @@ DivergenceStabilizedBasis::run()
       preconditioner_matrix.reinit(preconditioner_sparsity_pattern);
 
       system_matrix.copy_from(assembled_matrix);
-      preconditioer_matrix.copy_from(assembled_preconditioner);
+      preconditioner_matrix.copy_from(assembled_preconditioner);
 
       // Now take care of constraints
       velocity_basis_constraints[n_basis].condense(system_matrix,
                                                    system_rhs[n_basis]);
-      velocity_basis_constraints[n_basis].condense(preconditioer_matrix,
+      velocity_basis_constraints[n_basis].condense(preconditioner_matrix,
                                                    system_rhs[n_basis]);
 
       // Now solve
-      if (parameters.use_direct_solver)
+      if (false)
         solve_direct(n_basis);
       else
         {
@@ -977,7 +1065,7 @@ DivergenceStabilizedBasis::run()
     preconditioner_matrix.clear();
     sparsity_pattern.reinit(0, 0);
     preconditioner_sparsity_pattern.reinit(0, 0);
-    for (unsigned int i = 0; i < fe.base_element(0).n_dofs_per_cell(); ++i)
+    for (unsigned int i = 0; i < fe.base_element(0).dofs_per_cell; ++i)
       {
         velocity_basis_constraints[i].clear();
       }
@@ -988,7 +1076,7 @@ DivergenceStabilizedBasis::run()
   {
     // Free more memory as much as possible
     assembled_matrix.clear();
-    preconditioer_matrix.clear();
+    preconditioner_matrix.clear();
   }
 
   // We need to set a filename for the global solution on the current cell

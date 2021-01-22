@@ -71,6 +71,7 @@
 #include <model_data/stokes_model_data.h>
 #include <model_data/stokes_model_parameters.h>
 #include <multiscale_basis/divergence_stabilized_basis.h>
+#include <postprocessor/postprocessor.h>
 
 
 MSSTOKES_OPEN_NAMESPACE
@@ -91,30 +92,6 @@ public:
   run();
 
 private:
-  class Postprocessor : public DataPostprocessor<dim>
-  {
-  public:
-    Postprocessor(const unsigned int partition);
-
-    virtual void
-    evaluate_vector_field(
-      const DataPostprocessorInputs::Vector<dim> &inputs,
-      std::vector<Vector<double>> &computed_quantities) const override;
-
-    virtual std::vector<std::string>
-    get_names() const override;
-
-    virtual std::vector<
-      DataComponentInterpretation::DataComponentInterpretation>
-    get_data_component_interpretation() const override;
-
-    virtual UpdateFlags
-    get_needed_update_flags() const override;
-
-  private:
-    const unsigned int partition;
-  };
-
   void
   setup_dofs();
 
@@ -210,8 +187,6 @@ private:
   void
   copy_local_to_global_stokes_system(
     const Assembly::CopyData::StokesSystem<dim> &data);
-
-  class Postprocessor;
 
   /**
    * Convenience typedef for STL map holding basis functions for each

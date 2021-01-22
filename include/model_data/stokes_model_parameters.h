@@ -42,6 +42,10 @@ namespace CoreModelData
     std::string dirname_output;
 
     bool hello_from_cluster;
+
+
+    bool         verbose_basis = true;
+    unsigned int refinements_basis;
   };
 
 } // namespace CoreModelData

@@ -242,12 +242,13 @@ template <int dim>
 void
 MultiscaleStokesModel<dim>::initialize_and_compute_basis()
 {
-  TimerOutput::Scope t(computing_timer,
-                       "Modifued basis initialization and computation");
+  TimerOutput::Scope t(this->computing_timer,
+                       "Modified basis initialization and computation");
 
-  typename Triangulation<3>::active_cell_iterator cell =
-                                                    dof_handler.begin_active(),
-                                                  endc = dof_handler.end();
+  typename Triangulation<dim>::active_cell_iterator cell = stokes_dof_handler
+                                                             .begin_active(),
+                                                    endc =
+                                                      stokes_dof_handler.end();
   /*
    * This is only to identify first cell (for setting output flag for basis).
    */
@@ -265,7 +266,7 @@ MultiscaleStokesModel<dim>::initialize_and_compute_basis()
             parameters,
             cell,
             is_first_cell,
-            triangulation.locally_owned_subdomain(),
+            this->triangulation.locally_owned_subdomain(),
             temperature_forcing,
             this->mpi_communicator);
 
@@ -434,102 +435,6 @@ MultiscaleStokesModel<dim>::build_stokes_preconditioner()
 // Assembly Stokes system
 /////////////////////////////////////////////////////////////
 
-template <int dim>
-void
-MultiscaleStokesModel<dim>::local_assemble_stokes_system(
-  const typename DoFHandler<dim>::active_cell_iterator &cell,
-  Assembly::Scratch::StokesSystem<dim> &                scratch,
-  Assembly::CopyData::StokesSystem<dim> &               data)
-{
-  const unsigned int dofs_per_cell =
-    scratch.stokes_fe_values.get_fe().dofs_per_cell;
-  const unsigned int n_q_points = scratch.stokes_fe_values.n_quadrature_points;
-
-  const FEValuesExtractors::Vector velocities(0);
-  const FEValuesExtractors::Scalar pressure(dim);
-
-  scratch.stokes_fe_values.reinit(cell);
-
-  data.local_matrix = 0;
-  data.local_rhs    = 0;
-
-  /*
-   * Function values of temperature forcing
-   */
-  CoreModelData::TemperatureForcing<dim> temperature_forcing(
-    this->domain_center,
-    parameters.physical_constants.reference_temperature,
-    parameters.physical_constants.expansion_coefficient);
-  std::vector<double> temperature_forcing_values(n_q_points);
-  temperature_forcing.value_list(
-    scratch.stokes_fe_values.get_quadrature_points(),
-    temperature_forcing_values);
-
-  for (unsigned int q = 0; q < n_q_points; ++q)
-    {
-      for (unsigned int k = 0; k < dofs_per_cell; ++k)
-        {
-          scratch.phi_u[k] = scratch.stokes_fe_values[velocities].value(k, q);
-          scratch.grads_phi_u[k] =
-            scratch.stokes_fe_values[velocities].symmetric_gradient(k, q);
-          scratch.div_phi_u[k] =
-            scratch.stokes_fe_values[velocities].divergence(k, q);
-          scratch.phi_p[k] = scratch.stokes_fe_values[pressure].value(k, q);
-        }
-
-      /*
-       * Move everything to the LHS here.
-       */
-      for (unsigned int i = 0; i < dofs_per_cell; ++i)
-        {
-          for (unsigned int j = 0; j < dofs_per_cell; ++j)
-            {
-              data.local_matrix(i, j) +=
-                ((parameters.physical_constants.kinematic_viscosity * 2 *
-                  scratch.grads_phi_u[i] *
-                  scratch.grads_phi_u[j]) // eps(v):sigma(eps(u))
-                 -
-                 (scratch.div_phi_u[i] *
-                  scratch.phi_p[j]) // div(v)*p (solve for scaled pressure dt*p)
-                 - (scratch.phi_p[i] * scratch.div_phi_u[j]) // q*div(u)
-                 ) *
-                scratch.stokes_fe_values.JxW(q);
-            }
-        }
-
-      const Tensor<1, dim> gravity = CoreModelData::vertical_gravity_vector(
-        scratch.stokes_fe_values.quadrature_point(q),
-        parameters.physical_constants.gravity_constant);
-
-      /*
-       * This is only the RHS
-       */
-      for (unsigned int i = 0; i < dofs_per_cell; ++i)
-        {
-          data.local_rhs(i) += temperature_forcing_values[q] *
-                               (scratch.phi_u[i] * gravity) *
-                               scratch.stokes_fe_values.JxW(q);
-        }
-    }
-
-  cell->get_dof_indices(data.local_dof_indices);
-}
-
-
-
-template <int dim>
-void
-MultiscaleStokesModel<dim>::copy_local_to_global_stokes_system(
-  const Assembly::CopyData::StokesSystem<dim> &data)
-{
-  stokes_constraints.distribute_local_to_global(data.local_matrix,
-                                                data.local_rhs,
-                                                data.local_dof_indices,
-                                                stokes_matrix,
-                                                stokes_rhs);
-}
-
-
 
 template <int dim>
 void
@@ -543,29 +448,44 @@ MultiscaleStokesModel<dim>::assemble_stokes_system()
   stokes_matrix = 0;
   stokes_rhs    = 0;
 
-  const QGauss<dim> quadrature_formula(parameters.stokes_velocity_degree + 1);
-  using CellFilter =
-    FilteredIterator<typename DoFHandler<dim>::active_cell_iterator>;
+  const unsigned int dofs_per_cell = stokes_fe.dofs_per_cell;
 
-  WorkStream::run(
-    CellFilter(IteratorFilters::LocallyOwnedCell(),
-               stokes_dof_handler.begin_active()),
-    CellFilter(IteratorFilters::LocallyOwnedCell(), stokes_dof_handler.end()),
-    std::bind(&MultiscaleStokesModel<dim>::local_assemble_stokes_system,
-              this,
-              std::placeholders::_1,
-              std::placeholders::_2,
-              std::placeholders::_3),
-    std::bind(&MultiscaleStokesModel<dim>::copy_local_to_global_stokes_system,
-              this,
-              std::placeholders::_1),
-    Assembly::Scratch::StokesSystem<dim>(
-      stokes_fe,
-      mapping,
-      quadrature_formula,
-      (update_values | update_quadrature_points | update_JxW_values |
-       update_gradients)),
-    Assembly::CopyData::StokesSystem<dim>(stokes_fe));
+  FullMatrix<double> local_matrix(dofs_per_cell, dofs_per_cell);
+  Vector<double>     local_rhs(dofs_per_cell);
+
+  std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
+
+  // loop over cells
+  typename DoFHandler<dim>::active_cell_iterator cell = stokes_dof_handler
+                                                          .begin_active(),
+                                                 endc =
+                                                   stokes_dof_handler.end();
+  for (; cell != endc; ++cell)
+    {
+      if (cell->is_locally_owned())
+        {
+          typename std::map<CellId, BasisMap>::iterator it_basis =
+            cell_basis_map.find(cell->id());
+
+          local_matrix = 0;
+          local_rhs    = 0;
+
+          cell->get_dof_indices(local_dof_indices);
+
+          local_matrix = (it_basis->second).get_global_element_matrix();
+          local_rhs    = (it_basis->second).get_global_element_rhs();
+
+          // Add to global matrix, include constraints
+          cell->get_dof_indices(local_dof_indices);
+          stokes_constraints.distribute_local_to_global(
+            local_matrix,
+            local_rhs,
+            local_dof_indices,
+            stokes_matrix,
+            stokes_rhs,
+            /* use inhomogeneities for rhs */ true);
+        }
+    } // end for ++cell
 
   stokes_matrix.compress(VectorOperation::add);
   stokes_rhs.compress(VectorOperation::add);
@@ -706,116 +626,31 @@ MultiscaleStokesModel<dim>::solve()
 
 
 /////////////////////////////////////////////////////////////
-// Postprocessor
-/////////////////////////////////////////////////////////////
-
-
-template <int dim>
-MultiscaleStokesModel<dim>::Postprocessor::Postprocessor(
-  const unsigned int partition)
-  : partition(partition)
-{}
-
-
-
-template <int dim>
-std::vector<std::string>
-MultiscaleStokesModel<dim>::Postprocessor::get_names() const
-{
-  std::vector<std::string> solution_names(dim, "velocity");
-  solution_names.emplace_back("pressure");
-  solution_names.emplace_back("vertical_buoyancy_force");
-  solution_names.emplace_back("partition");
-
-  return solution_names;
-}
-
-
-
-template <int dim>
-std::vector<DataComponentInterpretation::DataComponentInterpretation>
-MultiscaleStokesModel<dim>::Postprocessor::get_data_component_interpretation()
-  const
-{
-  std::vector<DataComponentInterpretation::DataComponentInterpretation>
-    interpretation(dim,
-                   DataComponentInterpretation::component_is_part_of_vector);
-  interpretation.push_back(DataComponentInterpretation::component_is_scalar);
-  interpretation.push_back(DataComponentInterpretation::component_is_scalar);
-  interpretation.push_back(DataComponentInterpretation::component_is_scalar);
-
-  return interpretation;
-}
-
-
-
-template <int dim>
-UpdateFlags
-MultiscaleStokesModel<dim>::Postprocessor::get_needed_update_flags() const
-{
-  return update_values | update_gradients | update_quadrature_points;
-}
-
-
-
-template <int dim>
-void
-MultiscaleStokesModel<dim>::Postprocessor::evaluate_vector_field(
-  const DataPostprocessorInputs::Vector<dim> &inputs,
-  std::vector<Vector<double>> &               computed_quantities) const
-{
-  const unsigned int n_quadrature_points = inputs.solution_values.size();
-
-  Assert(inputs.solution_gradients.size() == n_quadrature_points,
-         ExcInternalError());
-  Assert(computed_quantities.size() == n_quadrature_points, ExcInternalError());
-  Assert(inputs.solution_values[0].size() == dim + 2, ExcInternalError());
-
-  /*
-   * TODO: Rescale to physical quantities here.
-   */
-  for (unsigned int q = 0; q < n_quadrature_points; ++q)
-    {
-      for (unsigned int d = 0; d < dim; ++d)
-        computed_quantities[q](d) = inputs.solution_values[q](d);
-
-      const double pressure       = (inputs.solution_values[q](dim));
-      computed_quantities[q](dim) = pressure;
-
-      // should be negative since gravity points downward
-      computed_quantities[q](dim + 1) = -inputs.solution_values[q](dim + 1);
-
-      computed_quantities[q](dim + 2) = partition;
-    }
-}
-
-
-
-/////////////////////////////////////////////////////////////
 // Output results and related stuff
 /////////////////////////////////////////////////////////////
 
+
 template <int dim>
 void
-MultiscaleStokesModel<dim>::send_global_weights_to_cell(
-  const TrilinosWrappers::MPI::Vector &some_solution)
+MultiscaleStokesModel<dim>::send_global_weights_to_cell()
 {
   // For each cell we get dofs_per_cell values
-  const unsigned int                   dofs_per_cell = fe.dofs_per_cell;
+  const unsigned int                   dofs_per_cell = stokes_fe.dofs_per_cell;
   std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
   // active cell iterator
-  typename DoFHandler<dim>::active_cell_iterator cell =
-                                                   dof_handler.begin_active(),
-                                                 endc = dof_handler.end();
+  typename DoFHandler<dim>::active_cell_iterator cell = stokes_dof_handler
+                                                          .begin_active(),
+                                                 endc =
+                                                   stokes_dof_handler.end();
   for (; cell != endc; ++cell)
     {
       if (cell->is_locally_owned())
         {
           cell->get_dof_indices(local_dof_indices);
           std::vector<double> extracted_weights(dofs_per_cell, 0);
-          some_solution.extract_subvector_to(local_dof_indices,
-                                             extracted_weights);
+          stokes_solution.extract_subvector_to(local_dof_indices,
+                                               extracted_weights);
 
           typename BasisMap::iterator it_basis =
             cell_basis_map.find(cell->id());
@@ -824,6 +659,7 @@ MultiscaleStokesModel<dim>::send_global_weights_to_cell(
     } // end ++cell
 }
 
+template <int dim>
 std::vector<std::string>
 MultiscaleStokesModel<dim>::collect_filenames_on_mpi_process() const
 {
@@ -850,158 +686,44 @@ MultiscaleStokesModel<dim>::output_results()
   this->pcout << "   Writing Boussinesq solution for one timestep... "
               << std::flush;
 
-  // First the forcing projection with a different DoFHandler
-  DoFHandler<dim> forcing_dof_handler(this->triangulation);
-  FE_Q<dim>       forcing_fe(parameters.stokes_velocity_degree);
-  forcing_dof_handler.distribute_dofs(forcing_fe);
+  // ---------------------------------------------------
+  // write local fine solution
+  typename std::map<CellId, BasisMap>::iterator it_basis =
+                                                  cell_basis_map.begin(),
+                                                it_endbasis =
+                                                  cell_basis_map.end();
 
-  AffineConstraints<double> no_constraints;
-  no_constraints.clear();
-  DoFTools::make_hanging_node_constraints(forcing_dof_handler, no_constraints);
-  no_constraints.close();
-
-  IndexSet locally_owned_forcing_dofs =
-    forcing_dof_handler.locally_owned_dofs();
-  IndexSet locally_relevant_forcing_dofs;
-  DoFTools::extract_locally_relevant_dofs(forcing_dof_handler,
-                                          locally_relevant_forcing_dofs);
-  LA::MPI::Vector bouyancy_forcing(locally_owned_forcing_dofs,
-                                   locally_relevant_forcing_dofs,
-                                   this->mpi_communicator);
-  VectorTools::project(forcing_dof_handler,
-                       no_constraints,
-                       QGauss<dim>(parameters.stokes_velocity_degree + 1),
-                       CoreModelData::TemperatureForcing<dim>(
-                         this->domain_center,
-                         parameters.physical_constants.reference_temperature,
-                         parameters.physical_constants.expansion_coefficient),
-                       bouyancy_forcing);
-
-  // Now join the Stokes and the forcing dofs
-  const FESystem<dim> joint_fe(stokes_fe, 1, forcing_fe, 1);
-
-  DoFHandler<dim> joint_dof_handler(this->triangulation);
-  joint_dof_handler.distribute_dofs(joint_fe);
-
-  Assert(joint_dof_handler.n_dofs() ==
-           stokes_dof_handler.n_dofs() + forcing_dof_handler.n_dofs(),
-         ExcInternalError());
-
-  LA::MPI::Vector joint_solution;
-
-  joint_solution.reinit(joint_dof_handler.locally_owned_dofs(),
-                        this->mpi_communicator);
-
-  {
-    std::vector<types::global_dof_index> local_joint_dof_indices(
-      joint_fe.dofs_per_cell);
-    std::vector<types::global_dof_index> local_stokes_dof_indices(
-      stokes_fe.dofs_per_cell);
-    std::vector<types::global_dof_index> local_forcing_dof_indices(
-      forcing_fe.dofs_per_cell);
-
-    typename DoFHandler<dim>::active_cell_iterator
-      joint_cell   = joint_dof_handler.begin_active(),
-      joint_endc   = joint_dof_handler.end(),
-      stokes_cell  = stokes_dof_handler.begin_active(),
-      forcing_cell = forcing_dof_handler.begin_active();
-    for (; joint_cell != joint_endc;
-         ++joint_cell, ++stokes_cell, ++forcing_cell)
-      {
-        if (joint_cell->is_locally_owned())
-          {
-            joint_cell->get_dof_indices(local_joint_dof_indices);
-            stokes_cell->get_dof_indices(local_stokes_dof_indices);
-            forcing_cell->get_dof_indices(local_forcing_dof_indices);
-
-            for (unsigned int i = 0; i < joint_fe.dofs_per_cell; ++i)
-              if (joint_fe.system_to_base_index(i).first.first == 0)
-                {
-                  Assert(joint_fe.system_to_base_index(i).second <
-                           local_stokes_dof_indices.size(),
-                         ExcInternalError());
-
-                  joint_solution(local_joint_dof_indices[i]) = stokes_solution(
-                    local_stokes_dof_indices[joint_fe.system_to_base_index(i)
-                                               .second]);
-                }
-              else
-                {
-                  Assert(joint_fe.system_to_base_index(i).first.first == 1,
-                         ExcInternalError());
-                  Assert(joint_fe.system_to_base_index(i).second <
-                           local_forcing_dof_indices.size(),
-                         ExcInternalError());
-
-                  joint_solution(local_joint_dof_indices[i]) = bouyancy_forcing(
-                    local_forcing_dof_indices[joint_fe.system_to_base_index(i)
-                                                .second]);
-                }
-          } // end if is_locally_owned()
-      }     // end for ++joint_cell
-  }
-
-  joint_solution.compress(VectorOperation::insert);
-
-  IndexSet locally_relevant_joint_dofs(joint_dof_handler.n_dofs());
-  DoFTools::extract_locally_relevant_dofs(joint_dof_handler,
-                                          locally_relevant_joint_dofs);
-
-  LA::MPI::Vector locally_relevant_joint_solution;
-  locally_relevant_joint_solution.reinit(locally_relevant_joint_dofs,
-                                         this->mpi_communicator);
-  locally_relevant_joint_solution = joint_solution;
-
-
-  Postprocessor postprocessor(
-    Utilities::MPI::this_mpi_process(this->mpi_communicator));
-
-  DataOut<dim> data_out;
-  data_out.attach_dof_handler(joint_dof_handler);
-
-  data_out.add_data_vector(locally_relevant_joint_solution, postprocessor);
-
-
-  // data_out.add_data_vector(stokes_dof_handler, stokes_solution,
-  // postprocessor);
-
-
-  // std::vector<std::string> forcing_names(1, "vertical buoyancy force");
-
-  // std::vector<DataComponentInterpretation::DataComponentInterpretation>
-  //   interpretation(1, DataComponentInterpretation::component_is_scalar);
-
-
-  data_out.build_patches(parameters.stokes_velocity_degree);
-
-  const std::string filename =
-    (parameters.filename_output + "." +
-     Utilities::int_to_string(this->triangulation.locally_owned_subdomain(),
-                              4) +
-     ".vtu");
-  std::ofstream output(parameters.dirname_output + "/" + filename);
-  data_out.write_vtu(output);
-
-  /*
-   * Write pvtu record
-   */
-  if (Utilities::MPI::this_mpi_process(this->mpi_communicator) == 0)
+  for (; it_basis != it_endbasis; ++it_basis)
     {
-      std::vector<std::string> filenames;
-      for (unsigned int i = 0;
-           i < Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
-           ++i)
-        filenames.push_back(std::string(parameters.filename_output) + "." +
-                            Utilities::int_to_string(i, 4) + ".vtu");
-
-      const std::string pvtu_master_filename =
-        (parameters.filename_output + ".pvtu");
-      std::ofstream pvtu_master(parameters.dirname_output + "/" +
-                                pvtu_master_filename);
-      data_out.write_pvtu_record(pvtu_master, filenames);
+      (it_basis->second).output_global_solution_in_cell();
     }
 
-  forcing_dof_handler.clear();
+  // Gather local filenames
+  std::vector<std::vector<std::string>> filename_list_list =
+    Utilities::MPI::gather(this->mpi_communicator,
+                           collect_filenames_on_mpi_process(),
+                           /* root_process = */ 0);
+
+  std::vector<std::string> filenames_on_cell;
+  for (unsigned int i = 0; i < filename_list_list.size(); ++i)
+    for (unsigned int j = 0; j < filename_list_list[i].size(); ++j)
+      filenames_on_cell.push_back(filename_list_list[i][j]);
+  // ---------------------------------------------------
+
+  DataOut<3> data_out;
+  data_out.attach_dof_handler(stokes_dof_handler);
+
+  // pvtu-record for all local fine outputs
+  if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
+    {
+      std::string filename_master = parameters.filename_output;
+      filename_master += "_fine";
+      filename_master += ".pvtu";
+
+      std::ofstream master_output(parameters.dirname_output + "/" +
+                                  filename_master);
+      data_out.write_pvtu_record(master_output, filenames_on_cell);
+    }
 
   this->pcout << std::endl;
 }
@@ -1024,6 +746,8 @@ MultiscaleStokesModel<dim>::run()
 
   setup_dofs();
 
+  initialize_and_compute_basis();
+
   try
     {
       Tools::create_data_directory(parameters.dirname_output);
@@ -1037,6 +761,8 @@ MultiscaleStokesModel<dim>::run()
   build_stokes_preconditioner();
 
   solve();
+
+  send_global_weights_to_cell();
 
   output_results();
 

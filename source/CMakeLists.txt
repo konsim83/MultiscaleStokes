@@ -20,10 +20,13 @@ set(MsStokes_TARGET_LIB_SRC
 	model_data/physical_constants.cc
 	model_data/stokes_model_data.inst.cc
 	model_data/stokes_model_parameters.cc
+	model_data/core_model_data.inst.cc
 	core/domain_geometry.inst.cc
-	model_data/core_model_data.inst.cc	
+	multiscale_basis/divergence_stabilized_basis.inst.cc
+	core/multiscale_stokes_model.inst.cc
 	core/stokes_model.inst.cc
-	core/stokes_model_assembly.inst.cc)
+	core/stokes_model_assembly.inst.cc
+	postprocessor/postprocessor.inst.cc)
 
 print_all_args (
   ${MsStokes_TARGET_LIB_SRC}

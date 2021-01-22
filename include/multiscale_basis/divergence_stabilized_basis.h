@@ -45,13 +45,17 @@
 
 // my headers
 #include <base/config.h>
+#include <base/utilities.h>
 #include <functions/function_concatinator.hpp>
 #include <functions/shape_fun_vector.hpp>
 #include <functions/shape_fun_vector_divergence.hpp>
 #include <functions/shape_function_scalar.hpp>
+#include <linear_algebra/inverse_matrix.hpp>
 #include <linear_algebra/local_inner_preconditioner.hpp>
 #include <linear_algebra/schur_complement.hpp>
+#include <model_data/stokes_model_data.h>
 #include <model_data/stokes_model_parameters.h>
+#include <postprocessor/postprocessor.h>
 
 MSSTOKES_OPEN_NAMESPACE
 
@@ -167,7 +171,7 @@ private:
   BlockVector<double> global_solution;
 
   // Shared pointer to preconditioner type for each system matrix
-  std::shared_ptr<typename LinearSolvers::LocalInnerPreconditioner<dim>::type>
+  std::shared_ptr<typename LinearAlgebra::LocalInnerPreconditioner<dim>::type>
     inner_schur_preconditioner;
 
   CellId global_cell_id;
@@ -180,7 +184,8 @@ private:
 
   std::vector<Point<dim>> corner_points;
 
-  SmartPointer<CoreModelData::TemperatureForcing<dim>> temperature_forcing_ptr;
+  SmartPointer<const CoreModelData::TemperatureForcing<dim>>
+    temperature_forcing_ptr;
 
   bool is_built_global_element_matrix;
   bool is_set_global_weights;
