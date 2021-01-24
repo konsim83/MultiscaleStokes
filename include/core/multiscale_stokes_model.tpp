@@ -140,10 +140,10 @@ MultiscaleStokesModel<dim>::setup_dofs()
   /*
    * Print some mesh and dof info
    */
-  this->pcout << "Number of active cells: "
+  this->pcout << "   Number of active cells: "
               << this->triangulation.n_global_active_cells() << " (on "
               << this->triangulation.n_levels() << " levels)" << std::endl
-              << "Number of degrees of freedom: " << n_u + n_p << " (" << n_u
+              << "   Number of degrees of freedom: " << n_u + n_p << " (" << n_u
               << " + " << n_p << ")" << std::endl
               << std::endl;
   this->pcout.get_stream().imbue(s);
@@ -471,20 +471,16 @@ MultiscaleStokesModel<dim>::assemble_stokes_system()
           local_matrix = 0;
           local_rhs    = 0;
 
-          cell->get_dof_indices(local_dof_indices);
-
           local_matrix = (it_basis->second).get_global_element_matrix();
           local_rhs    = (it_basis->second).get_global_element_rhs();
 
           // Add to global matrix, include constraints
           cell->get_dof_indices(local_dof_indices);
-          stokes_constraints.distribute_local_to_global(
-            local_matrix,
-            local_rhs,
-            local_dof_indices,
-            stokes_matrix,
-            stokes_rhs,
-            /* use inhomogeneities for rhs */ true);
+          stokes_constraints.distribute_local_to_global(local_matrix,
+                                                        local_rhs,
+                                                        local_dof_indices,
+                                                        stokes_matrix,
+                                                        stokes_rhs);
         }
     } // end for ++cell
 

@@ -48,9 +48,6 @@ DomainGeometry<dim>::DomainGeometry()
                                         /*direction*/ d,
                                         periodicity_vector);
     }
-
-  pcout << "   Number of active cells:       " << triangulation.n_active_cells()
-        << std::endl;
 }
 
 
@@ -69,9 +66,6 @@ DomainGeometry<dim>::refine_global(unsigned int n_refine)
                                     "DomainGeometry - global refinement");
 
   triangulation.refine_global(n_refine);
-
-  pcout << "   Number of active cells after global refinement:       "
-        << triangulation.n_active_cells() << std::endl;
 }
 
 

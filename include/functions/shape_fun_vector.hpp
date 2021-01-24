@@ -74,7 +74,7 @@ namespace ShapeFun
   ShapeFunctionVector<dim>::ShapeFunctionVector(
     const FiniteElement<dim> &                  fe,
     typename Triangulation<dim>::cell_iterator &cell)
-    : Function<dim>(dim + 1)
+    : Function<dim>(dim)
     , fe_ptr(&fe)
     , dofs_per_cell(fe_ptr->dofs_per_cell)
     , shape_fun_index(0)
@@ -127,8 +127,6 @@ namespace ShapeFun
                                                    /* q_index */ 0,
                                                    i);
       }
-
-    value[dim] = 0;
   }
 
   template <int dim>
@@ -170,7 +168,6 @@ namespace ShapeFun
                                               /* q_index */ i,
                                               component);
           }
-        values[i][dim] = 0;
       }
   }
 
@@ -213,7 +210,6 @@ namespace ShapeFun
                                               /* q_index */ i,
                                               component);
           }
-        values[i][dim] = 0;
       }
   }
 

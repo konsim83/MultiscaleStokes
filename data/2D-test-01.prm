@@ -1,7 +1,7 @@
 subsection Stokes Model
 
 	subsection Mesh parameters
-		set initial global refinement = 6
+		set initial global refinement = 1
 	end
 	
 	set space dimension = 2
@@ -12,7 +12,7 @@ subsection Stokes Model
 	set use locally conservative discretization = false
 	
 	# This is only for debugging purposes
-	set solver diagnostics level = 2
+	set solver diagnostics level = 1
     	
 	# Base name of outputfile
 	set filename output = stokes
@@ -27,7 +27,7 @@ subsection Stokes Model
 
 	# This is only for the multiscale stabilized basis
 	set verbose basis = true
-	set refinements basis = 3
+	set refinements basis = 5
 
 	# This is the variance of the forcing
 	# temperature bubble (Gaussian).

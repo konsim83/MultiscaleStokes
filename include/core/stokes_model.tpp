@@ -135,10 +135,11 @@ StokesModel<dim>::setup_dofs()
   /*
    * Print some mesh and dof info
    */
-  this->pcout << "Number of active cells: "
+  this->pcout << "[Global]"
+              << "	Number of active cells: "
               << this->triangulation.n_global_active_cells() << " (on "
               << this->triangulation.n_levels() << " levels)" << std::endl
-              << "Number of degrees of freedom: " << n_u + n_p << " (" << n_u
+              << "	Number of degrees of freedom: " << n_u + n_p << " (" << n_u
               << " + " << n_p << ")" << std::endl
               << std::endl;
   this->pcout.get_stream().imbue(s);
@@ -337,7 +338,8 @@ StokesModel<dim>::build_stokes_preconditioner()
   TimerOutput::Scope timer_section(this->computing_timer,
                                    "   Build Stokes preconditioner");
 
-  this->pcout << "   Assembling and building Stokes block preconditioner..."
+  this->pcout << "[Global]"
+              << "   Assembling and building Stokes block preconditioner..."
               << std::flush;
 
   assemble_stokes_preconditioner();
@@ -481,7 +483,8 @@ StokesModel<dim>::assemble_stokes_system()
   TimerOutput::Scope timer_section(this->computing_timer,
                                    "   Assemble Stokes system");
 
-  this->pcout << "   Assembling Stokes system..." << std::flush;
+  this->pcout << "[Global]"
+              << "   Assembling Stokes system..." << std::flush;
 
   stokes_matrix = 0;
   stokes_rhs    = 0;
@@ -551,7 +554,8 @@ StokesModel<dim>::get_maximal_velocity() const
   double max_global_velocity =
     Utilities::MPI::max(max_local_velocity, this->mpi_communicator);
 
-  this->pcout << "   Max velocity (with dimensions): " << max_global_velocity
+  this->pcout << "[Global]"
+              << "   Max velocity (with dimensions): " << max_global_velocity
               << " m/s" << std::endl;
 
   return max_global_velocity;
@@ -660,7 +664,8 @@ StokesModel<dim>::output_results()
   TimerOutput::Scope timer_section(this->computing_timer,
                                    "Postprocessing and output");
 
-  this->pcout << "   Writing Stokes solution... " << std::flush;
+  this->pcout << "[Global]"
+              << "   Writing Stokes solution... " << std::flush;
 
   // First the forcing projection with a different DoFHandler
   DoFHandler<dim> forcing_dof_handler(this->triangulation);
@@ -858,7 +863,8 @@ StokesModel<dim>::run()
 
   this->computing_timer.print_summary();
 
-  this->pcout << "----------------------------------------" << std::endl;
+  this->pcout << "[Global]"
+              << "----------------------------------------" << std::endl;
 }
 
 MSSTOKES_CLOSE_NAMESPACE

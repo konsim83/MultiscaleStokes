@@ -114,6 +114,9 @@ private:
   assemble_system();
 
   void
+  project_standard_basis_on_velocity_space();
+
+  void
   project_standard_basis_on_pressure_space();
 
   void
@@ -140,9 +143,11 @@ private:
 
   Triangulation<dim> triangulation;
   FESystem<dim>      fe;
+  FESystem<dim>      velocity_fe;
   DoFHandler<dim>    dof_handler;
 
   std::vector<AffineConstraints<double>> velocity_basis_constraints;
+  std::vector<AffineConstraints<double>> pressure_basis_constraints;
 
   BlockSparsityPattern sparsity_pattern;
   BlockSparsityPattern preconditioner_sparsity_pattern;
