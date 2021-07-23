@@ -1,7 +1,7 @@
 subsection Stokes Model
 
 	subsection Mesh parameters
-		set initial global refinement = 1
+		set initial global refinement = 0
 	end
 	
 	set space dimension = 2
@@ -27,7 +27,7 @@ subsection Stokes Model
 
 	# This is only for the multiscale stabilized basis
 	set verbose basis = true
-	set refinements basis = 5
+	set refinements basis = 2
 
 	# This is the variance of the forcing
 	# temperature bubble (Gaussian).

@@ -543,7 +543,7 @@ MultiscaleStokesModel<dim>::solve()
   TimerOutput::Scope timer_section(this->computing_timer,
                                    "   Solve Stokes system");
   this->pcout
-    << "   Solving Stokes system for one time step with (block preconditioned solver)... "
+    << "   Solving Stokes system with (block preconditioned solver)... "
     << std::flush;
 
   LA::MPI::BlockVector distributed_stokes_solution(stokes_rhs);

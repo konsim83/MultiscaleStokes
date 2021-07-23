@@ -526,7 +526,14 @@ void
 DivergenceStabilizedBasis<dim>::solve_direct(unsigned int n_basis)
 {
   Timer timer;
-  timer.restart();
+
+  if (parameters.verbose_basis)
+    {
+      std::cout << "      Invoke direct solver for basis   " << n_basis
+                << "   ...";
+
+      timer.restart();
+    }
 
   // for convenience define an alias
   const BlockVector<double> &this_system_rhs = system_rhs[n_basis];
@@ -544,9 +551,9 @@ DivergenceStabilizedBasis<dim>::solve_direct(unsigned int n_basis)
     pressure_basis_constraints[n_basis - velocity_basis.size()].distribute(
       solution);
 
-  timer.stop();
   if (parameters.verbose_basis)
     {
+      timer.stop();
       std::cout
         << "      Solving linear system (SparseDirectUMFPACK) for basis   "
         << n_basis << "... done in   " << timer.cpu_time() << "   seconds."
@@ -1173,32 +1180,38 @@ DivergenceStabilizedBasis<dim>::run()
   // velocity basis into the right space
   project_velocity_divergence_on_pressure_space();
 
-  if (false)
-    project_standard_basis_on_velocity_space();
+  if (true)
+    {
+      project_standard_basis_on_velocity_space();
+    }
   else
-    for (unsigned int n_basis = 0; n_basis < velocity_basis.size(); ++n_basis)
-      {
-        // The assembled matrices do not contain boundary conditions so copy
-        // them and apply the constraints
-        system_matrix.reinit(sparsity_pattern);
-        preconditioner_matrix.reinit(preconditioner_sparsity_pattern);
+    {
+      // for (unsigned int n_basis = 0; n_basis < velocity_basis.size();
+      // ++n_basis)
+      //   {
+      //     // The assembled matrices do not contain boundary conditions so
+      //     copy
+      //     // them and apply the constraints
+      //     system_matrix.reinit(sparsity_pattern);
+      //     preconditioner_matrix.reinit(preconditioner_sparsity_pattern);
 
-        system_matrix.copy_from(assembled_matrix);
-        preconditioner_matrix.copy_from(assembled_preconditioner);
+      //     system_matrix.copy_from(assembled_matrix);
+      //     preconditioner_matrix.copy_from(assembled_preconditioner);
 
-        // Now take care of constraints
-        velocity_basis_constraints[n_basis].condense(system_matrix,
-                                                     system_rhs[n_basis]);
-        velocity_basis_constraints[n_basis].condense(preconditioner_matrix);
+      //     // Now take care of constraints
+      //     velocity_basis_constraints[n_basis].condense(system_matrix,
+      //                                                  system_rhs[n_basis]);
+      //     velocity_basis_constraints[n_basis].condense(preconditioner_matrix);
 
-        // Now solve
-        if (true)
-          solve_direct(n_basis);
-        else
-          {
-            solve_iterative(n_basis);
-          }
-      } // end for
+      //     // Now solve
+      //     if (true)
+      //       solve_direct(n_basis);
+      //     else
+      //       {
+      //         solve_iterative(n_basis);
+      //       }
+      //   } // end for
+    } // end if
 
   assemble_global_element_matrix();
 
